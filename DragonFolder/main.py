@@ -48,18 +48,21 @@ async def setup():
         await bot.start(TOKEN) 
 
 @tasks.loop(minutes=20)
-async def db_heartbeat():
-    """Keeps the Railway MySQL instance warm every 20 mins """
-    try:
-        from config import get_db_cursor
-        
-        cursor = get_db_cursor()
-        cursor.execute("SELECT 1") 
-        cursor.close()
-    except Exception as e:
-        # If this fails, it usually means the DB is currently restarting
-        print(f"⚠️ Heartbeat: Database is likely rebooting... {e}")
+async def war_reminder(self):
+    cursor = None
+    # Attempt to connect up to 3 times
+    for attempt in range(3):
+        try:
+            cursor = get_db_cursor()
+            if cursor: break 
+        except:
+            await asyncio.sleep(5) # Wait 5 seconds before retrying
+    
+    if not cursor:
+        print("❌ Could not recover DB connection after 3 attempts.")
+        return
 
+    # ... rest of your logic ...
 # --- BOT EVENTS ---
 
 @bot.event

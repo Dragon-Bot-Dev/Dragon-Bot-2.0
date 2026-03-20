@@ -1,3 +1,4 @@
+import asyncio
 import os
 import mysql.connector
 import coc
@@ -52,21 +53,11 @@ def connect_db():
         password=password, 
         database=database, 
         port=port, 
-        autocommit=True
+        autocommit=True,
+        buffered=True
     )
 
 db_connection = None
-def get_db_cursor():
-    global db_connection
-    try:
-        # Ping the server to see if it's alive
-        db_connection.ping(reconnect=True, attempts=3, delay=1)
-    except:
-        # If ping fails, force a full reconnection
-        import mysql.connector
-        db_connection = mysql.connector.connect(**DB_CONFIG)
-    
-    return db_connection.cursor()
 def get_db_cursor():
     global db_connection
     try:
@@ -92,3 +83,22 @@ def get_db_cursor():
         except Exception as final_e:
             print(f"❌ CRITICAL DATABASE FAILURE: {final_e}")
             raise final_e
+        
+async def get_safe_cursor(retries=3, delay=3):
+    """
+    Attempts to connect to the DB multiple times before failing.
+    Perfect for handling Railway 'cold starts' or brief network blips.
+    """
+    for attempt in range(retries):
+        try:
+            # Call your original cursor function
+            cursor = get_db_cursor()
+            if cursor:
+                return cursor
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"⚠️ DB Connection failed (Attempt {attempt + 1}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+            else:
+                print(f"❌ DB Connection failed after {retries} attempts: {e}")
+                raise e
