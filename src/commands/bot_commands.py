@@ -80,7 +80,7 @@ class BotCommands(commands.Cog):
         summary_embed.add_field(name="⚔️ Player Core",
            value=(
                 "> `/playerinfo` — General stats and clan-related info\n"
-                "> `/playerequipments` — Hero Equipment progress\n"
+                "> `/playerheroes` — Check heroes, pets and equipment levels\n"
                 "> `/searchmember` — Find a player in your current clan"
             ),
             inline=False)
@@ -122,9 +122,8 @@ class BotCommands(commands.Cog):
             name="⚔️ **Player Tools**",
             value=(
                 "> `/playerinfo` — General stats and clan-related info\n"
-                "> `/playertroops` — Troop & Siege levels\n"
-                "> `/playerequipments` — Hero Equipment progress\n"
-                "> `/playerspells` — Spell levels\n"
+                "> `/playerlevels` — Troops & Siege levels\n"
+                "> `/playerheroes` — Check heroes, pets and equipment levels\n"
                 "> `/searchmember` — Find a player in your current clan"
             ),
             inline=False
@@ -264,7 +263,8 @@ class BotCommands(commands.Cog):
         await interaction.response.defer()
         
         try:
-            cursor = get_db_cursor()
+            conn = get_db_connection()
+            cursor = conn.cursor(buffered=True)
             guild_id = str(interaction.guild.id)
             
             cursor.execute("SELECT clan_tag, war_channel_id, raid_channel_id FROM servers WHERE guild_id = %s", (guild_id,))
@@ -272,10 +272,9 @@ class BotCommands(commands.Cog):
             
             # 1. Improved Safely check if row exists
             if row:
-                clan_tag = row[0] if row[0] else "None"
-                
-                war_mention = f"<#{row[1]}>" 
-                raid_mention = f"<#{row[2]}>"
+                clan_tag = f"`{row[0]}`" if row[0] else "`❌ Not Set`"
+                war_mention = f"<#{row[1]}>" if row[1] else "`❌ Not Configured`"
+                raid_mention = f"<#{row[2]}>" if row[2] else "`❌ Not Configured`"
             else:
                 clan_tag = "`❌ Run /setclantag to configure`"
                 war_mention = "`❌ Not Configured`"
@@ -303,6 +302,8 @@ class BotCommands(commands.Cog):
             embed.set_footer(text=f"Serving {len(self.bot.guilds)} servers | {len(self.bot.users)} users")
             
             await interaction.followup.send(embed=embed)
+
+            cursor.close()
         except Exception as e:
             print(f"Error in botstatus: {e}")
             await interaction.followup.send(f"❌ Error fetching status: `{e}`")
@@ -377,8 +378,8 @@ class BotCommands(commands.Cog):
                 cursor = conn.cursor(buffered=True) # Get cursor
                 
                 cursor.execute("""
-                    INSERT INTO players (discord_id, discord_username, guild_id, player_tag, is_premium)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO players (discord_id, discord_username, guild_id, guild_name, player_tag, is_premium)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE 
                         player_tag = VALUES(player_tag),
                         discord_username = VALUES(discord_username)
@@ -386,6 +387,7 @@ class BotCommands(commands.Cog):
                     str(interaction.user.id), 
                     interaction.user.display_name, 
                     str(interaction.guild.id), 
+                    interaction.guild.name,
                     clean_tag, 
                     0
                 ))
@@ -403,12 +405,30 @@ class BotCommands(commands.Cog):
 
     @app_commands.command(name='unlink', description="Unlink your CoC account")
     async def unlink(self, interaction: discord.Interaction):
-        cursor = get_db_cursor()
-        cursor.execute("DELETE FROM players WHERE discord_id = %s AND guild_id = %s", (interaction.user.id, interaction.guild.id))
-        if cursor.rowcount > 0:
-            await interaction.response.send_message("✅ Your Clash of Clans account has been unlinked from this server.")
-        else:
-            await interaction.response.send_message("❌ You don't have an account linked in this server.", ephemeral=True)
+        # ALWAYS defer if you're hitting the DB. 
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(buffered=True)
+            
+            
+            cursor.execute(
+                "DELETE FROM players WHERE discord_id = %s AND guild_id = %s", 
+                (str(interaction.user.id), str(interaction.guild.id))
+            )
+            
+            conn.commit()
+            
+            if cursor.rowcount > 0:
+                await interaction.followup.send("✅ Your Clash of Clans account has been unlinked from this server.")
+            else:
+                await interaction.followup.send("❌ You don't have an account linked in this server.")
+            
+            cursor.close()
+        except Exception as e:
+            print(f"DB Error in Unlink: {e}")
+            await interaction.followup.send("❌ An error occurred while unlinking.")
 
 
     

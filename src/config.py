@@ -78,7 +78,7 @@ def get_db_cursor():
         db_connection = connect_db()
         return db_connection.cursor(buffered=True)
         
-def get_db_connection(): # Return the connection itself
+def get_db_connection(): # Return the connection itself For Upadting DB
     global db_connection
     try:
         if db_connection is None or not db_connection.is_connected():
@@ -91,7 +91,7 @@ def get_db_connection(): # Return the connection itself
         db_connection = connect_db()
         return db_connection
     
-async def get_safe_cursor(retries=3, delay=3):
+async def get_safe_cursor(retries=3, delay=3): # For reminders
     """
     Attempts to connect to the DB multiple times before failing.
     Perfect for handling Railway 'cold starts' or brief network blips.

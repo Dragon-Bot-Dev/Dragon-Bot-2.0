@@ -1,3 +1,6 @@
+
+import sys
+
 import discord
 import time
 import coc
@@ -18,26 +21,28 @@ class PlayerCommands(commands.Cog):
     @app_commands.command(name="playerinfo", description="Get player's general information")
     @app_commands.describe(user="Select a Discord user", player_tag="The user's tag (optional)")
     async def player_info(self, interaction: discord.Interaction, user: discord.Member = None, player_tag: str = None):
-        """Displays full player profile using dot notation."""
-        cursor = get_db_cursor()
-        guild_id = interaction.guild.id
+        await interaction.response.defer()
 
         try:
+            guild_id = str(interaction.guild.id)
+            
+            # Assuming fetch_player_from_DB is updated to handle string IDs
             tag = fetch_player_from_DB(guild_id, user, player_tag)
             player_data = await get_player_data(tag)
             
             player_labels = ", ".join(label.name for label in player_data.labels) if player_data.labels else "None"
             timestamp = int(time.time())
 
-            # Map the role object to your display string
-            role_mapping = {'admin': "Elder", 
-                            'coleader': "Co-Leader", 
-                            'leader': "Leader", 
-                            'member': "Member"}
+            role_mapping = {
+                'admin': "Elder", 
+                'coleader': "Co-Leader", 
+                'leader': "Leader", 
+                'member': "Member"
+            }
             display_role = role_mapping.get(str(player_data.role).lower(), str(player_data.role).capitalize())
 
             embed = discord.Embed(
-                title=f"User: {player_data.name}, {player_data.tag}",
+                title=f"User: {player_data.name} ({player_data.tag})",
                 description=f"{player_labels}\nLast updated: <t:{timestamp}:R>",
                 color=0x0000FF
             )
@@ -46,98 +51,112 @@ class PlayerCommands(commands.Cog):
                 embed.set_thumbnail(url=player_data.league.icon.url)
             
             if player_data.clan:
-                embed.add_field(name="Clan Name", value=player_data.clan.name, inline=True)
-                embed.add_field(name="Tag", value=player_data.clan.tag, inline=True)
+                embed.add_field(name="Clan", value=f"{player_data.clan.name} ({player_data.clan.tag})", inline=False)
             
             embed.add_field(name="Role", value=display_role, inline=True)
             embed.add_field(name="TH Lvl", value=player_data.town_hall, inline=True)
             embed.add_field(name="Exp Lvl", value=player_data.exp_level, inline=True)
 
-            # coc.py uses .war_opt_in which returns a boolean or specific string
-            pref = player_data.war_opted_in or "Unknown" 
-            if pref == True:
-                pref = "Opted In"
-            elif pref == False:
-                pref = "Opted Out"
-            elif pref == None:
-                pref = "Not in a clan"
-            print(f"War Preference Raw: {player_data.war_opted_in}")
+            # War Preference Logic
+            pref = "Unknown"
+            if player_data.war_opted_in is True: pref = "✅ Opted In"
+            elif player_data.war_opted_in is False: pref = "❌ Opted Out"
+            elif player_data.war_opted_in is None: pref = "Not in a clan"
             
-            embed.add_field(name="War Preference", value=f"{pref}", inline=True)
+            embed.add_field(name="War Preference", value=pref, inline=True)
+            embed.add_field(name="Trophies", value=f"🏆 {player_data.trophies}", inline=True)
+            embed.add_field(name="War Stars", value=f"⭐ {player_data.war_stars}", inline=True)
 
-            embed.add_field(name="Trophies", value=f":trophy: {player_data.trophies}", inline=True)
-            embed.add_field(name="Best Trophies", value=f":trophy: {player_data.best_trophies}", inline=True)
-            embed.add_field(name="War Stars", value=f":star: {player_data.war_stars}", inline=True)
             embed.add_field(name="Donated", value=f"{player_data.donations:,}", inline=True)
             embed.add_field(name="Received", value=f"{player_data.received:,}", inline=True)
             embed.add_field(name="Capital Contributions", value=f"{player_data.clan_capital_contributions:,}", inline=True)
 
-            await interaction.response.send_message(embed=embed)
-        except Exception as e:
-            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+            # 3. Use followup because we deferred
+            await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="playerlevels", description="Get a player's troop, siege, & spell levels")
-    @app_commands.describe(user="Select a user", village="home (default), builder, or both")
-    async def player_troops(self, interaction: discord.Interaction, user: discord.Member = None, player_tag: str = None, village: str = "home"):
-        """Filters and displays troop and pet levels."""
-        cursor = get_db_cursor()
+        except (PlayerNotLinkedError, MissingPlayerTagError) as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+        except Exception as e:
+            print(f"Error in player_info: {e}")
+            await interaction.followup.send(f"❌ {e}")
+
+
+    @app_commands.command(name="playerlevels", description="Get a player's troop & siege levels")
+    @app_commands.describe(
+        user="Select a Discord user", 
+        player_tag="The user's tag (optional)",
+        village="Choose which village to view (Default: Home)"
+    )
+    @app_commands.choices(village=[
+        app_commands.Choice(name="Home Village", value="home"),
+        app_commands.Choice(name="Builder Base", value="builder"),
+        app_commands.Choice(name="Both Villages", value="both")
+    ])
+    async def player_troops(self, interaction: discord.Interaction, 
+                             user: discord.Member = None, 
+                             player_tag: str = None, 
+                             village: str = "home"):
+        
+        await interaction.response.defer()
+        
         try:
-            tag = fetch_player_from_DB(interaction.guild.id, user, player_tag)
+            # 1. Setup Identity & Data
+            guild_id = str(interaction.guild.id)
+            tag = fetch_player_from_DB(guild_id, user, player_tag)
             player_data = await get_player_data(tag)
 
             exclude = ['super', 'sneaky', 'ice golem', 'inferno', 'rocket balloon', 'ice hound']
+            
             def format_lvl(item): 
-                max_str = '(MAXED)' if item.is_max else ''
-                return f"{item.name}: Level {item.level}/{item.max_level} {max_str}"
+                try:
+                    max_val = item.max_level
+                except (IndexError, AttributeError):
+                    max_val = "?"
+                max_str = '★' if item.is_max else ''
+                return f"  {item.name}: {item.level}/{max_val} {max_str}"
 
-            v_type = village.lower()
-            troop_list = []
-            siege_list = []
-            spell_list = []
+            lines = [f"PLAYER: {player_data.name} ({player_data.tag})"]
 
-            if v_type == 'builder':
-                troop_list = [format_lvl(t) for t in player_data.builder_troops if all(w not in t.name.lower() for w in exclude)]
+            # 2. Home Village Logic
+            if village in ["home", "both"]:
+                # Filter troops (excluding sieges and specific 'super' types)
+                troop_list = [format_lvl(t) for t in player_data.home_troops 
+                              if not t.is_siege_machine and all(w not in t.name.lower() for w in exclude)]
+                siege_list = [format_lvl(s) for s in player_data.home_troops if s.is_siege_machine]
+                
+                if troop_list:
+                    lines.append("\n--- HOME TROOPS ---")
+                    lines.extend(troop_list)
+                if siege_list:
+                    lines.append("\n--- SIEGE MACHINES ---")
+                    lines.extend(siege_list)
+
+            # 3. Builder Base Logic
+            if village in ["builder", "both"]:
+                builder_list = [format_lvl(t) for t in player_data.builder_troops]
+                if builder_list:
+                    lines.append("\n--- BUILDER TROOPS ---")
+                    lines.extend(builder_list)
+
+            # 4. Final Formatting (Direct Send)
+            final_message = f"```yaml\n" + "\n".join(lines) + "```"
+            
+            # Simple safety check: Discord will 400 if it's over 2000
+            if len(final_message) > 2000:
+                await interaction.followup.send("⚠️ This player has too much data to display in one message. Try selecting one village at a time.", ephemeral=True)
             else:
-                # 1. Filter standard troops (Not a siege machine AND not excluded)
-                troop_list = [
-                    format_lvl(t) for t in player_data.home_troops 
-                    if not t.is_siege_machine and all(w not in t.name.lower() for w in exclude)
-                ]
-                
-                # 2. Filter siege machines specifically
-                siege_list = [
-                    format_lvl(s) for s in player_data.home_troops 
-                    if s.is_siege_machine
-                ]
-                
-                # 3. Get pets
-                spell_list = [format_lvl(p) for p in player_data.spells]
+                await interaction.followup.send(final_message)
 
-            # Build the result string with clear headers
-            lines = [f"Name: {player_data.name}\nTag: {player_data.tag}"]
-            
-            if troop_list:
-                lines.append("\nTroops:")
-                lines.extend(troop_list)
-            
-            if siege_list:
-                lines.append("\nSiege Machines:")
-                lines.extend(siege_list)
-                
-            if spell_list:
-                lines.append("\nSpells:")
-                lines.extend(spell_list)
-
-            res = f"```yaml\n" + "\n".join(lines) + "```"
-            await interaction.response.send_message(res)
-            
+        # 5. Clean Exception Handling
+        except (PlayerNotLinkedError, MissingPlayerTagError) as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+        except coc.NotFound:
+            await interaction.followup.send(f"❌ Clash API could not find tag: `{tag}`", ephemeral=True)
         except Exception as e:
-            # Note: We use followup.send if the response was deferred, 
-            # but since we aren't deferring here, response.send_message is fine.
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"Error: {e}", ephemeral=True)
+            import sys
+            _, _, exc_tb = sys.exc_info()
+            print(f"Error in player_troops (Line {exc_tb.tb_lineno}): {e}")
+            await interaction.followup.send("❌ An error occurred while fetching player data.", ephemeral=True)
 
     @app_commands.command(name="playerheroes", description="Get info on player's heroes, equipment, and pets")
     async def player_equips(self, interaction: discord.Interaction, user: discord.Member = None, player_tag: str = None):
@@ -151,7 +170,7 @@ class PlayerCommands(commands.Cog):
             def format_lvl(item): 
                 # Identifying rarity for the display string
                 rarity = "EPIC" if item.max_level > 18 else "Common"
-                max_str = '(MAXED)' if item.is_max else ''
+                max_str = '★' if item.is_max else ''
                 return f"  {item.name} ({rarity}): Lvl {item.level}/{item.max_level} {max_str}"
 
             # 1. Format and filter Heroes
@@ -189,18 +208,6 @@ class PlayerCommands(commands.Cog):
                 await interaction.response.send_message(f"Error: {e}", ephemeral=True)
             else:
                 await interaction.followup.send(f"Error: {e}", ephemeral=True)
-
-    @app_commands.command(name="playerspells", description="Get player's spell levels")
-    async def player_spells(self, interaction: discord.Interaction, user: discord.Member = None, player_tag: str = None):
-        """Lists all unlocked spells and their levels."""
-        try:
-            tag = fetch_player_from_DB(interaction.guild.id, user, player_tag)
-            player_data = await get_player_data(tag)
-
-            spells = "\n".join([f"{s.name}: {s.level}/{s.max_level}" for s in player_data.spells])
-            await interaction.response.send_message(f"```yaml\n{player_data.name}'s Spells:\n{spells}```")
-        except Exception as e:
-            await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(PlayerCommands(bot))

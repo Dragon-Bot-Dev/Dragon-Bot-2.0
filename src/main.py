@@ -60,8 +60,8 @@ async def db_heartbeat(): # Removed 'self'
             print("💓 DB Heartbeat: Connection is warm.")
     except Exception as e:
         print(f"⚠️ Heartbeat: Database is likely rebooting or timed out... {e}")
-# --- BOT EVENTS ---
 
+# --- BOT EVENTS ---
 @bot.event
 async def on_ready():
     """Triggered when the bot is officially connected to Discord."""
