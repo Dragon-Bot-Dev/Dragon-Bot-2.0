@@ -497,10 +497,19 @@ class WarPatrol(commands.Cog):
     def __init__(self, bot, coc_client):
         self.bot = bot
         self.coc_client = coc_client
-        self.war_reminder.start()
+        # ❌ REMOVE self.war_reminder.start() FROM HERE
+
+    async def cog_load(self):
+        """Runs once when the Cog is loaded into the bot."""
+        if not self.war_reminder.is_running():
+            self.war_reminder.start()
+            print("⚔️ War Reminder Task: Started safely.")
 
     def cog_unload(self):
+        """Runs when the Cog is removed or the bot shuts down."""
+        # This is your "Zombie Killer"
         self.war_reminder.cancel()
+        print("🔌 War Reminder Task: Cancelled gracefully.")
 
     @tasks.loop(minutes=20)
     async def war_reminder(self):
@@ -577,7 +586,7 @@ class WarPatrol(commands.Cog):
                         if len(m.attacks) < max_atks:
                             d_id = links.get(m.tag)
                             mention = f"<@{d_id}>" if d_id else f"**{m.name[:10]}**"
-                            unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks)} left)")
+                            unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks or [])} left)")
 
                     # 6. SEND REMINDER (Only if there are slackers)
                     if unattacked_lines:
@@ -602,6 +611,7 @@ class WarPatrol(commands.Cog):
                                         f"Type: `{source_label}` | Remaining: `{len(unattacked_lines)}/{war_data.team_size}`",
                             color=embed_color
                         )
+                        
                         
                         embed.add_field(name="⚠️ Pending Attacks", value="\n".join(unattacked_lines[:25]), inline=False)
                         embed.add_field(name="Scoreboard", value=f"⭐ `{war_data.clan.stars}` vs ⭐ `{war_data.opponent.stars}`", inline=True)
@@ -764,9 +774,9 @@ class WarPatrol(commands.Cog):
             await interaction.followup.send(f"⚠️ Error: `{e}`")
         finally:
             cursor.close()
-# --- CRITICAL SETUP UPDATE ---
+
 async def setup(bot):
-    # This ensures we get the client AFTER initialize_coc() has run
+  
     import config 
     
     # Pass config.coc_client to both
