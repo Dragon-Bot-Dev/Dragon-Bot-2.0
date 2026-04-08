@@ -38,21 +38,25 @@ async def initialize_coc():
     except Exception as e:
         print(f"❌ CoC Login Failed: {e}")
 
-# 3. Robust Database logic
 def connect_db():
-    # Railway provides these variables automatically if you use their MySQL service
-    host = os.getenv("MYSQLHOST", "localhost")
+    # Priority 1: Railway TCP Proxy (Public/Stable gateway)
+    # Priority 2: Standard Railway MySQL Variables
+    # Priority 3: Localhost defaults
+    host = os.getenv("RAILWAY_TCP_PROXY_DOMAIN", os.getenv("MYSQLHOST", "localhost"))
     user = os.getenv("MYSQLUSER", "root")
     password = os.getenv("MYSQLPASSWORD")
     database = os.getenv("MYSQLDATABASE")
-    port = os.getenv("MYSQLPORT", "3306")
     
+    port = os.getenv("RAILWAY_TCP_PROXY_PORT", os.getenv("MYSQLPORT", "3306"))
+    
+    print(f"Attempting connection to {host}:{port}...")
+
     return mysql.connector.connect(
         host=host, 
         user=user, 
         password=password, 
         database=database, 
-        port=port, 
+        port=int(port), 
         autocommit=True,
         buffered=True
     )

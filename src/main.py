@@ -48,7 +48,7 @@ async def setup():
         await bot.start(TOKEN) 
 
 @tasks.loop(minutes=9)
-async def db_heartbeat(): # Removed 'self'
+async def db_heartbeat():
     """Keeps the Railway MySQL instance warm every 9 mins"""
     try:
         # will just try again in 9 minutes if it fails once.
@@ -65,11 +65,6 @@ async def db_heartbeat(): # Removed 'self'
 @bot.event
 async def on_ready():
     """Triggered when the bot is officially connected to Discord."""
-    # 1. Start the DB Heartbeat
-    if not db_heartbeat.is_running():
-        db_heartbeat.start()
-        print("💓 Database heartbeat started.")
-
     try:
         await bot.tree.sync() 
         

@@ -497,7 +497,7 @@ class WarPatrol(commands.Cog):
     def __init__(self, bot, coc_client):
         self.bot = bot
         self.coc_client = coc_client
-        # ❌ REMOVE self.war_reminder.start() FROM HERE
+        #
 
     async def cog_load(self):
         """Runs once when the Cog is loaded into the bot."""
@@ -638,142 +638,142 @@ class WarPatrol(commands.Cog):
     async def before_war_reminder(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="test_reminder", description="DEBUG: War Map Stats & Reminder Preview")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def test_reminder(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+    # @app_commands.command(name="test_reminder", description="DEBUG: War Map Stats & Reminder Preview")
+    # @app_commands.checks.has_permissions(administrator=True)
+    # async def test_reminder(self, interaction: discord.Interaction):
+    #     await interaction.response.defer(ephemeral=True)
         
-        cursor = await get_safe_cursor(retries=3, delay=5)
-        try:
-            guild_id = str(interaction.guild.id)
-            # Fetching last_sent is key for simulation
-            cursor.execute("SELECT clan_tag, war_channel_id, last_war_reminder FROM servers WHERE guild_id = %s", (guild_id,))
-            row = cursor.fetchone()
-            if not row or not row[0]:
-                return await interaction.followup.send("❌ Clan tag not configured.")
+    #     cursor = await get_safe_cursor(retries=3, delay=5)
+    #     try:
+    #         guild_id = str(interaction.guild.id)
+    #         # Fetching last_sent is key for simulation
+    #         cursor.execute("SELECT clan_tag, war_channel_id, last_war_reminder FROM servers WHERE guild_id = %s", (guild_id,))
+    #         row = cursor.fetchone()
+    #         if not row or not row[0]:
+    #             return await interaction.followup.send("❌ Clan tag not configured.")
             
-            clan_tag, war_channel_id, last_sent = row
+    #         clan_tag, war_channel_id, last_sent = row
             
-            # 1. FETCH DATA
-            war_data = await self.coc_client.get_current_war(clan_tag)
-            if not war_data or war_data.state == "notInWar":
-                try:
-                    group = await self.coc_client.get_league_group(clan_tag)
-                    if group:
-                        async for cwl_war in group.get_wars_for_clan(clan_tag):
-                            if cwl_war.state != "notInWar":
-                                war_data = cwl_war
-                                break
-                except coc.NotFound:
-                    pass
+    #         # 1. FETCH DATA
+    #         war_data = await self.coc_client.get_current_war(clan_tag)
+    #         if not war_data or war_data.state == "notInWar":
+    #             try:
+    #                 group = await self.coc_client.get_league_group(clan_tag)
+    #                 if group:
+    #                     async for cwl_war in group.get_wars_for_clan(clan_tag):
+    #                         if cwl_war.state != "notInWar":
+    #                             war_data = cwl_war
+    #                             break
+    #             except coc.NotFound:
+    #                 pass
 
-            if not war_data or war_data.state == "notInWar":
-                return await interaction.followup.send("💤 No active war found.")
+    #         if not war_data or war_data.state == "notInWar":
+    #             return await interaction.followup.send("💤 No active war found.")
 
-            # 2. LOGIC PREPARATION
-            max_atks = getattr(war_data, 'attacks_per_member', 0)
-            if max_atks == 0:
-                is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
-                max_atks = 1 if is_cwl else 2
-            else:
-                is_cwl = (max_atks == 1)
+    #         # 2. LOGIC PREPARATION
+    #         max_atks = getattr(war_data, 'attacks_per_member', 0)
+    #         if max_atks == 0:
+    #             is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
+    #             max_atks = 1 if is_cwl else 2
+    #         else:
+    #             is_cwl = (max_atks == 1)
 
-            source_label = "CWL" if is_cwl else "Standard"
+    #         source_label = "CWL" if is_cwl else "Standard"
             
-            our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
-            active_our = our_members[:war_data.team_size]
+    #         our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
+    #         active_our = our_members[:war_data.team_size]
             
-            cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
-            links = {r[0]: r[1] for r in cursor.fetchall()}
+    #         cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
+    #         links = {r[0]: r[1] for r in cursor.fetchall()}
 
-            # 3. CATEGORIZE
-            attacked, unattacked = [], []
-            for m in active_our:
-                atks = m.attacks
-                display_name = m.name[:10] + ".." if len(m.name) > 10 else m.name
-                entry = {
-                    "pos": m.map_position,
-                    "name": display_name,
-                    "tag": m.tag,
-                    "done": len(atks),
-                    "stars": sum(a.stars for a in atks)
-                }
-                if len(atks) >= max_atks:
-                    attacked.append(entry)
-                else:
-                    d_id = links.get(m.tag)
-                    entry["mention"] = f"<@{d_id}>" if d_id else f"**{display_name}**"
-                    unattacked.append(entry)
+    #         # 3. CATEGORIZE
+    #         attacked, unattacked = [], []
+    #         for m in active_our:
+    #             atks = m.attacks
+    #             display_name = m.name[:10] + ".." if len(m.name) > 10 else m.name
+    #             entry = {
+    #                 "pos": m.map_position,
+    #                 "name": display_name,
+    #                 "tag": m.tag,
+    #                 "done": len(atks),
+    #                 "stars": sum(a.stars for a in atks)
+    #             }
+    #             if len(atks) >= max_atks:
+    #                 attacked.append(entry)
+    #             else:
+    #                 d_id = links.get(m.tag)
+    #                 entry["mention"] = f"<@{d_id}>" if d_id else f"**{display_name}**"
+    #                 unattacked.append(entry)
 
-            # 4. TIME & TRIGGER SIMULATION
-            try:
-                unix_ts = int(war_data.end_time.time.timestamp())
-            except AttributeError:
-                unix_ts = int(war_data.end_time.timestamp())
+    #         # 4. TIME & TRIGGER SIMULATION
+    #         try:
+    #             unix_ts = int(war_data.end_time.time.timestamp())
+    #         except AttributeError:
+    #             unix_ts = int(war_data.end_time.timestamp())
 
-            seconds_left = war_data.end_time.seconds_until
-            hours_left = seconds_left / 3600
+    #         seconds_left = war_data.end_time.seconds_until
+    #         hours_left = seconds_left / 3600
             
-            # --- TRIGGER LOGIC ---
-            simulated_trigger = "None"
-            will_fire = False
+    #         # --- TRIGGER LOGIC ---
+    #         simulated_trigger = "None"
+    #         will_fire = False
 
-            if hours_left <= 1:
-                simulated_trigger = "final"
-                if last_sent != "final":
-                    will_fire = True
-            elif hours_left <= 4:
-                simulated_trigger = "warning"
-                if last_sent not in ["warning", "final"]:
-                    will_fire = True
+    #         if hours_left <= 1:
+    #             simulated_trigger = "final"
+    #             if last_sent != "final":
+    #                 will_fire = True
+    #         elif hours_left <= 4:
+    #             simulated_trigger = "warning"
+    #             if last_sent not in ["warning", "final"]:
+    #                 will_fire = True
 
-            # 5. DRY RUN REPORT TEXT
-            status_report = (
-                f"📊 **Reminder Dry Run: `{clan_tag}`**\n"
-                f"• Time Left: `{hours_left:.2f}h`\n"
-                f"• DB State: `{last_sent or 'None'}`\n"
-                f"• Current Window: `{simulated_trigger.upper()}`\n"
-                f"• **Loop Triggered?** `{'✅ YES' if will_fire else '❌ NO'}`\n"
-                f"--------------------------------"
-            )
+    #         # 5. DRY RUN REPORT TEXT
+    #         status_report = (
+    #             f"📊 **Reminder Dry Run: `{clan_tag}`**\n"
+    #             f"• Time Left: `{hours_left:.2f}h`\n"
+    #             f"• DB State: `{last_sent or 'None'}`\n"
+    #             f"• Current Window: `{simulated_trigger.upper()}`\n"
+    #             f"• **Loop Triggered?** `{'✅ YES' if will_fire else '❌ NO'}`\n"
+    #             f"--------------------------------"
+    #         )
 
-            # 6. EMBED FORMATTING
-            is_final = (hours_left <= 1)
-            time_label = "🚨 FINAL HOUR" if is_final else "⏳ 4 HOURS LEFT"
+    #         # 6. EMBED FORMATTING
+    #         is_final = (hours_left <= 1)
+    #         time_label = "🚨 FINAL HOUR" if is_final else "⏳ 4 HOURS LEFT"
             
-            if war_data.state == "preparation": embed_color = 0x3498db
-            elif war_data.clan.stars > war_data.opponent.stars: embed_color = 0x2ecc71
-            elif war_data.clan.stars < war_data.opponent.stars: embed_color = 0xe74c3c
-            else: embed_color = 0xf1c40f
+    #         if war_data.state == "preparation": embed_color = 0x3498db
+    #         elif war_data.clan.stars > war_data.opponent.stars: embed_color = 0x2ecc71
+    #         elif war_data.clan.stars < war_data.opponent.stars: embed_color = 0xe74c3c
+    #         else: embed_color = 0xf1c40f
 
-            embed = discord.Embed(
-                title=f"{time_label}: War Status Report",
-                description=f"**{war_data.clan.name}** vs **{war_data.opponent.name}**\n"
-                            f"Type: `{source_label}` | Remaining: `{len(unattacked)}/{war_data.team_size}`",
-                color=embed_color
-            )
+    #         embed = discord.Embed(
+    #             title=f"{time_label}: War Status Report",
+    #             description=f"**{war_data.clan.name}** vs **{war_data.opponent.name}**\n"
+    #                         f"Type: `{source_label}` | Remaining: `{len(unattacked)}/{war_data.team_size}`",
+    #             color=embed_color
+    #         )
 
-            if unattacked:
-                slacker_list = "\n".join([f"{e['pos']}. {e['mention']} ({max_atks - e['done']} left)" for e in unattacked])
-                embed.add_field(name="⚠️ Pending Attacks", value=slacker_list[:1024], inline=False)
-            else:
-                embed.add_field(name="✅ Status", value="All attacks completed!", inline=False)
+    #         if unattacked:
+    #             slacker_list = "\n".join([f"{e['pos']}. {e['mention']} ({max_atks - e['done']} left)" for e in unattacked])
+    #             embed.add_field(name="⚠️ Pending Attacks", value=slacker_list[:1024], inline=False)
+    #         else:
+    #             embed.add_field(name="✅ Status", value="All attacks completed!", inline=False)
 
-            if attacked:
-                done_list = "\n".join([f"{e['pos']}. **{e['name']}** ({e['stars']}⭐)" for e in attacked])
-                embed.add_field(name="Completed Attacks", value=done_list[:1024], inline=False)
+    #         if attacked:
+    #             done_list = "\n".join([f"{e['pos']}. **{e['name']}** ({e['stars']}⭐)" for e in attacked])
+    #             embed.add_field(name="Completed Attacks", value=done_list[:1024], inline=False)
 
-            embed.add_field(name="Scoreboard", value=f"⭐ `{war_data.clan.stars}` vs ⭐ `{war_data.opponent.stars}`", inline=True)
-            embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
-            embed.set_footer(text=f"Trigger Status: {simulated_trigger.upper()} | DB: {last_sent or 'None'}")
+    #         embed.add_field(name="Scoreboard", value=f"⭐ `{war_data.clan.stars}` vs ⭐ `{war_data.opponent.stars}`", inline=True)
+    #         embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
+    #         embed.set_footer(text=f"Trigger Status: {simulated_trigger.upper()} | DB: {last_sent or 'None'}")
 
-            # Send both the report and the embed preview
-            await interaction.followup.send(content=status_report, embed=embed)
+    #         # Send both the report and the embed preview
+    #         await interaction.followup.send(content=status_report, embed=embed)
 
-        except Exception as e:
-            await interaction.followup.send(f"⚠️ Error: `{e}`")
-        finally:
-            cursor.close()
+    #     except Exception as e:
+    #         await interaction.followup.send(f"⚠️ Error: `{e}`")
+    #     finally:
+    #         cursor.close()
 
 async def setup(bot):
   
