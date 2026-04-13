@@ -372,52 +372,64 @@ class RaidPatrol(commands.Cog):
                             get_db_connection().commit()
                         continue
                     
+                    # 4. SIMPLIFIED TIME & TRIGGER LOGIC
                     hours_left = raid.end_time.seconds_until / 3600
-                    reminder_type = "None"
-                    if hours_left <= 6: reminder_type = "6h"
-                    elif hours_left <= 24: reminder_type = "24h"
+                    
+                    # Only trigger if within 24 hours AND we haven't sent the 24h reminder yet
+                    if hours_left > 24 or last_sent == "24h":
+                        continue
 
-                    if reminder_type == "None": continue
-                    if (reminder_type == "6h" and last_sent == "6h"): continue
-                    if (reminder_type == "24h" and last_sent in ["24h", "6h"]): continue
+                    reminder_type = "24h"
 
-                    # 5. SLACKERS
+                    # 5. SLACKERS ( catching 0-hitters)
+                    # Fetch Discord links
                     cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (str(guild_id),))
                     links = {row[0]: row[1] for row in cursor.fetchall()}
                     
+                    full_clan = await self.coc_client.get_clan(tag)
+                    participants = {m.tag: m.attack_count for m in raid.members}
+                    
                     unattacked_lines = []
-                    for m in raid.members:
-                        if m.attack_count < 6:
-                            d_id = links.get(m.tag)
-                            mention = f"<@{d_id}>" if d_id else f"**{m.name[:10]}**"
-                            unattacked_lines.append(f"• {mention} ({m.attack_count}/6 hits)")
+                    for clan_member in full_clan.members:
+                        hits_done = participants.get(clan_member.tag, 0)
+                        
+                        if hits_done < 6:
+                            d_id = links.get(clan_member.tag)
+                            # Since this is our only reminder, we use the Mention/Ping logic
+                            if d_id:
+                                mention = f"<@{d_id}>"
+                            else:
+                                mention = f"**{clan_member.name[:10]}**"
+                            
+                            unattacked_lines.append(f"• {mention} ({hits_done}/6 hits)")
 
+                    # 6. SEND REMINDER
                     if unattacked_lines:
                         channel = self.bot.get_channel(int(raid_channel_id)) or await self.bot.fetch_channel(int(raid_channel_id))
                         
                         try: unix_ts = int(raid.end_time.time.timestamp())
                         except AttributeError: unix_ts = int(raid.end_time.timestamp())
 
-                        is_final = (reminder_type == "6h")
                         embed = discord.Embed(
-                            title=f"🏰 {'🚨 FINAL 6 HOURS' if is_final else '⏳ 24 HOURS REMAINING'}: Capital Raid",
-                            color=0xFF4500 if is_final else 0xFFCC00
+                            title="⏳ 24 HOURS LEFT: Capital Raid",
+                            description="Final Day of Raid Weekend! Finish your attacks for Clan Medals.",
+                            color=0xFFCC00 # Yellow warning color
                         )
                         
                         val = "\n".join(unattacked_lines[:25]) or "Everyone has finished!"
                         embed.add_field(name="Pending Attacks", value=val[:1024], inline=False)
-                        loot = getattr(raid, 'total_loot', getattr(raid, 'capital_resources_looted', 0))
                         
-                        # FIX: Changed raid.loot to raid.capital_resources_looted
-                        embed.add_field(name="💰 Looted", value=f"`{loot:,}`", inline=True)
+                        loot = getattr(raid, 'total_loot', getattr(raid, 'capital_resources_looted', 0))
+                        embed.add_field(name="Total Capital Looted", value=f"`{loot:,}`", inline=True)
                         embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
                         embed.set_footer(text=f"Clan Tag: {tag}")
 
                         await channel.send(embed=embed)
-                        print(f"✅ SUCCESS: Sent {reminder_type} raid reminder for {tag}")
+                        print(f"✅ SUCCESS: Sent 24h raid reminder for {tag}")
 
-                    cursor.execute("UPDATE servers SET last_raid_reminder = %s WHERE clan_tag = %s", (reminder_type, tag))
-                    get_db_connection().commit()
+                        # Update DB inside the block to ensure we only "finish" the task if sent
+                        cursor.execute("UPDATE servers SET last_raid_reminder = %s WHERE clan_tag = %s", (reminder_type, tag))
+                        get_db_connection().commit()
 
                 except Exception as clan_error:
                     print(f"❌ Error for raid tag {tag}: {clan_error}")
@@ -427,7 +439,7 @@ class RaidPatrol(commands.Cog):
         finally:
             if cursor: cursor.close()
 
-    # @app_commands.command(name="test_raid_reminder", description="DEBUG: Preview Raid Weekend stats & logic")
+    # @app_commands.command(name="test_raid_reminder", description="DEBUG: Preview Raid stats with 0-hitters included")
     # @app_commands.checks.has_permissions(administrator=True)
     # async def test_raid_reminder(self, interaction: discord.Interaction):
     #     await interaction.response.defer(ephemeral=True)
@@ -439,26 +451,74 @@ class RaidPatrol(commands.Cog):
     #         if not row or not row[0]: return await interaction.followup.send("❌ No tag set.")
             
     #         clan_tag, last_sent = row
+            
+    #         # 1. Fetch Raid Log & Full Clan Roster
     #         raids = await self.coc_client.get_raid_log(clan_tag, limit=1)
     #         if not raids: return await interaction.followup.send("❌ No raid log.")
     #         raid = raids[0]
             
-    #         # Identify Slackers
+    #         # This is the "Full Set" of potential attackers
+    #         full_clan = await self.coc_client.get_clan(clan_tag)
+            
+    #         # 2. Map Raid Participants (The "Attacked Subset")
+    #         # Key: Tag, Value: attack_count
+    #         participants = {m.tag: m.attack_count for m in raid.members}
+            
+    #         # 3. Fetch Discord Links
     #         cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
     #         links = {r[0]: r[1] for r in cursor.fetchall()}
-    #         slackers = [f"• {f'<@{links[r]}' if (r:=links.get(m.tag)) else f'**{m.name}**'} ({m.attack_count}/6)" for m in raid.members if m.attack_count < 6]
 
-    #         embed = discord.Embed(title="🏰 Raid Debug Preview", color=0xFFCC00)
-    #         embed.add_field(name="Pending Hits", value="\n".join(slackers[:20]) or "None")
-    #         # FIX: Changed raid.loot to raid.capital_resources_looted
+    #         # 4. Cross-Reference & Sort
+    #         # We want to catch anyone in the clan who has < 6 hits
+    #         slacker_data = []
+    #         for member in full_clan.members:
+    #             hits = participants.get(member.tag, 0) # Default to 0 if not in raid log
+    #             if hits < 6:
+    #                 slacker_data.append({
+    #                     "name": member.name,
+    #                     "tag": member.tag,
+    #                     "hits": hits
+    #                 })
+            
+    #         # Senior Dev Touch: Sort slackers by hits (0-hitters at the top)
+    #         slacker_data = sorted(slacker_data, key=lambda x: x['hits'])
+
+    #         # 5. Format Mentions
+    #         formatted_slackers = []
+    #         for s in slacker_data:
+    #             d_id = links.get(s['tag'])
+    #             # Using Bold Name for test (or mentions if you want to test pings)
+    #             if d_id:
+    #                 user = self.bot.get_user(int(d_id))
+    #                 mention = f"<@{d_id}>" if user else f"**{s['name']}**"
+    #             else:
+    #                 mention = f"**{s['name']}**"
+                
+    #             formatted_slackers.append(f"• {mention} ({s['hits']}/6 hits)")
+
+    #         # 6. Build Embed
+    #         embed = discord.Embed(
+    #             title="🏰 Raid Debug: Full Roster Audit", 
+    #             description=f"Showing all members with pending hits for **{full_clan.name}**",
+    #             color=0xFFCC00
+    #         )
+            
+    #         # Safety slice to avoid 1024 char limit
+    #         slacker_val = "\n".join(formatted_slackers[:25]) or "✅ Everyone is done!"
+    #         embed.add_field(name="Pending Attacks (Sorted by Urgency)", value=slacker_val, inline=False)
+            
+    #         # Safe attribute check for Loot
     #         loot = getattr(raid, 'total_loot', getattr(raid, 'capital_resources_looted', 0))
     #         embed.add_field(name="💰 Looted", value=f"`{loot:,}`", inline=True)
+    #         embed.set_footer(text=f"Total Potential Attackers: {full_clan.member_count}")
             
     #         await interaction.followup.send(embed=embed)
+
     #     except Exception as e:
     #         await interaction.followup.send(f"⚠️ Debug Error: `{e}`")
     #     finally:
-    #         cursor.close()
+    #         if cursor:
+    #             cursor.close()
 
 # Requirement for main.py loading
 async def setup(bot):

@@ -17,35 +17,29 @@ class WarCommands(commands.Cog):
         self.coc_client = coc_client 
 
     @app_commands.command(name="currentwar", description="Get info or member stats for current war")
-    @app_commands.describe(wartag="Tag for a specific CWL war", mode="Choose: info (Overview) or stats (Member details)")
+    @app_commands.describe(mode="Choose: info (Overview) or stats (Member details)")
     @app_commands.choices(mode=[
         app_commands.Choice(name="Overall Information of War Results", value="info"),
         app_commands.Choice(name="Shows each member's attacks, stars, and destruction", value="stats")
     ])
-    async def currentwar(self, interaction: discord.Interaction, wartag: str = None, mode: str = "info"):
-    
-        
+
+    async def currentwar(self, interaction: discord.Interaction, mode: str = "info"):
         await interaction.response.defer()
         
         try:
             db_tag = fetch_clan_from_db(interaction.guild.id)
             war_data = None
             
-            # 1. Fetch the data
-            if wartag:
-                war_data = await coc_client.get_league_war(wartag)
-            else:
-                # Standard check
-                war_data = await coc_client.get_current_war(db_tag)
+            # Straight to automatic fetching
+            war_data = await coc_client.get_current_war(db_tag)
                 
-                # If standard check is empty or not in war, try the group
-                if not war_data or war_data.state == "notInWar":
-                    group = await coc_client.get_league_group(db_tag)
-                    if group:
-                        async for war in group.get_wars_for_clan(db_tag):
-                            if war.state != "notInWar":
-                                war_data = war
-                                break
+            if not war_data or war_data.state == "notInWar":
+                group = await coc_client.get_league_group(db_tag)
+                if group:
+                    async for war in group.get_wars_for_clan(db_tag):
+                        if war.state != "notInWar":
+                            war_data = war
+                            break
 
             if not war_data or war_data.state == "notInWar":
                 return await interaction.followup.send("No active war or CWL round found.")
@@ -653,110 +647,110 @@ class WarPatrol(commands.Cog):
     async def before_war_reminder(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="test_war_reminder", description="DEBUG: Preview War reminder and ping logic")
-    @app_commands.describe(force_mode="Simulate a specific window (Warning vs Final)")
-    @app_commands.choices(force_mode=[
-        app_commands.Choice(name="4h Warning (Bold Names)", value="warning"),
-        app_commands.Choice(name="1h Final (Pings/Mentions)", value="final")
-    ])
-    @app_commands.checks.has_permissions(administrator=True)
-    async def test_war_reminder(self, interaction: discord.Interaction, force_mode: str = None):
-        await interaction.response.defer(ephemeral=True)
+    # @app_commands.command(name="test_war_reminder", description="DEBUG: Preview War reminder and ping logic")
+    # @app_commands.describe(force_mode="Simulate a specific window (Warning vs Final)")
+    # @app_commands.choices(force_mode=[
+    #     app_commands.Choice(name="4h Warning (Bold Names)", value="warning"),
+    #     app_commands.Choice(name="1h Final (Pings/Mentions)", value="final")
+    # ])
+    # @app_commands.checks.has_permissions(administrator=True)
+    # async def test_war_reminder(self, interaction: discord.Interaction, force_mode: str = None):
+    #     await interaction.response.defer(ephemeral=True)
         
-        cursor = await get_safe_cursor(retries=3, delay=5)
-        try:
-            guild_id = str(interaction.guild.id)
+    #     cursor = await get_safe_cursor(retries=3, delay=5)
+    #     try:
+    #         guild_id = str(interaction.guild.id)
             
-            # 1. FETCH CONFIG
-            cursor.execute("SELECT clan_tag, war_channel_id, last_war_reminder FROM servers WHERE guild_id = %s", (guild_id,))
-            row = cursor.fetchone()
-            if not row or not row[0]:
-                return await interaction.followup.send("❌ Clan tag not configured.")
+    #         # 1. FETCH CONFIG
+    #         cursor.execute("SELECT clan_tag, war_channel_id, last_war_reminder FROM servers WHERE guild_id = %s", (guild_id,))
+    #         row = cursor.fetchone()
+    #         if not row or not row[0]:
+    #             return await interaction.followup.send("❌ Clan tag not configured.")
             
-            clan_tag, war_channel_id, last_sent = row
+    #         clan_tag, war_channel_id, last_sent = row
 
-            # 2. FETCH WAR DATA
-            war_data = await self.coc_client.get_current_war(clan_tag)
-            # CWL Fallback
-            if not war_data or war_data.state == "notInWar":
-                try:
-                    group = await self.coc_client.get_league_group(clan_tag)
-                    if group:
-                        async for cwl_war in group.get_wars_for_clan(clan_tag):
-                            if cwl_war.state != "notInWar":
-                                war_data = cwl_war
-                                break
-                except: pass
+    #         # 2. FETCH WAR DATA
+    #         war_data = await self.coc_client.get_current_war(clan_tag)
+    #         # CWL Fallback
+    #         if not war_data or war_data.state == "notInWar":
+    #             try:
+    #                 group = await self.coc_client.get_league_group(clan_tag)
+    #                 if group:
+    #                     async for cwl_war in group.get_wars_for_clan(clan_tag):
+    #                         if cwl_war.state != "notInWar":
+    #                             war_data = cwl_war
+    #                             break
+    #             except: pass
 
-            if not war_data or war_data.state == "notInWar":
-                return await interaction.followup.send("💤 No active war found to simulate.")
+    #         if not war_data or war_data.state == "notInWar":
+    #             return await interaction.followup.send("💤 No active war found to simulate.")
 
-            # 3. TRIGGER SIMULATION
-            seconds_left = war_data.end_time.seconds_until
-            hours_left = seconds_left / 3600
+    #         # 3. TRIGGER SIMULATION
+    #         seconds_left = war_data.end_time.seconds_until
+    #         hours_left = seconds_left / 3600
             
-            # Use forced mode if provided, otherwise use real time
-            simulated_type = force_mode if force_mode else ("final" if hours_left <= 1 else "warning" if hours_left <= 4 else "None")
+    #         # Use forced mode if provided, otherwise use real time
+    #         simulated_type = force_mode if force_mode else ("final" if hours_left <= 1 else "warning" if hours_left <= 4 else "None")
 
-            # 4. SLACKER IDENTIFICATION (The "Ping Gate")
-            max_atks = getattr(war_data, 'attacks_per_member', 0)
-            if max_atks == 0:
-                is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
-                max_atks = 1 if is_cwl else 2
+    #         # 4. SLACKER IDENTIFICATION (The "Ping Gate")
+    #         max_atks = getattr(war_data, 'attacks_per_member', 0)
+    #         if max_atks == 0:
+    #             is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
+    #             max_atks = 1 if is_cwl else 2
 
-            our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
-            active_lineup = our_members[:war_data.team_size]
+    #         our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
+    #         active_lineup = our_members[:war_data.team_size]
             
-            cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
-            links = {r[0]: r[1] for r in cursor.fetchall()}
+    #         cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
+    #         links = {r[0]: r[1] for r in cursor.fetchall()}
 
-            unattacked_lines = []
-            for m in active_lineup:
-                if len(m.attacks) < max_atks:
-                    d_id = links.get(m.tag)
-                    if d_id:
-                        user = self.bot.get_user(int(d_id))
-                        if user:
-                            # THE LOGIC GATE TEST
-                            if simulated_type == "final":
-                                mention = user.mention # Should show blue/ping
-                            else:
-                                mention = f"**{user.display_name}**" # Should show bold text
-                        else:
-                            mention = f"**{m.name[:10]}**"
-                    else:
-                        mention = f"**{m.name[:10]}**"
+    #         unattacked_lines = []
+    #         for m in active_lineup:
+    #             if len(m.attacks) < max_atks:
+    #                 d_id = links.get(m.tag)
+    #                 if d_id:
+    #                     user = self.bot.get_user(int(d_id))
+    #                     if user:
+    #                         # THE LOGIC GATE TEST
+    #                         if simulated_type == "final":
+    #                             mention = user.mention # Should show blue/ping
+    #                         else:
+    #                             mention = f"**{user.display_name}**" # Should show bold text
+    #                     else:
+    #                         mention = f"**{m.name[:10]}**"
+    #                 else:
+    #                     mention = f"**{m.name[:10]}**"
                     
-                    unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks)} left)")
+    #                 unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks)} left)")
 
-            # 5. GENERATE REPORT
-            try:
-                unix_ts = int(war_data.end_time.time.timestamp())
-            except AttributeError:
-                unix_ts = int(war_data.end_time.timestamp())
+    #         # 5. GENERATE REPORT
+    #         try:
+    #             unix_ts = int(war_data.end_time.time.timestamp())
+    #         except AttributeError:
+    #             unix_ts = int(war_data.end_time.timestamp())
 
-            report = (
-                f"📊 **War Logic Simulation**\n"
-                f"• Real Time Left: `{hours_left:.2f}h`\n"
-                f"• Simulating Window: `{simulated_type.upper()}`\n"
-                f"• **Expected Output:** `{'Blue Mentions/Pings' if simulated_type == 'final' else 'Bold Plain Text'}`\n"
-                f"--------------------------------"
-            )
+    #         report = (
+    #             f"📊 **War Logic Simulation**\n"
+    #             f"• Real Time Left: `{hours_left:.2f}h`\n"
+    #             f"• Simulating Window: `{simulated_type.upper()}`\n"
+    #             f"• **Expected Output:** `{'Blue Mentions/Pings' if simulated_type == 'final' else 'Bold Plain Text'}`\n"
+    #             f"--------------------------------"
+    #         )
 
-            embed = discord.Embed(
-                title=f"{'🚨 FINAL HOUR' if simulated_type == 'final' else '⏳ 4 HOURS LEFT'}: War Status",
-                color=0xe74c3c if simulated_type == "final" else 0xf1c40f
-            )
-            embed.add_field(name="⚠️ Pending Hits", value="\n".join(unattacked_lines[:25]) or "None!")
-            embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
-            embed.set_footer(text=f"Test Mode: {simulated_type} | DB Last: {last_sent}")
+    #         embed = discord.Embed(
+    #             title=f"{'🚨 FINAL HOUR' if simulated_type == 'final' else '⏳ 4 HOURS LEFT'}: War Status",
+    #             color=0xe74c3c if simulated_type == "final" else 0xf1c40f
+    #         )
+    #         embed.add_field(name="⚠️ Pending Hits", value="\n".join(unattacked_lines[:25]) or "None!")
+    #         embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
+    #         embed.set_footer(text=f"Test Mode: {simulated_type} | DB Last: {last_sent}")
 
-            await interaction.followup.send(content=report, embed=embed)
+    #         await interaction.followup.send(content=report, embed=embed)
 
-        except Exception as e:
-            await interaction.followup.send(f"❌ Simulation Error: `{e}`")
-        finally:
-            if cursor: cursor.close()
+    #     except Exception as e:
+    #         await interaction.followup.send(f"❌ Simulation Error: `{e}`")
+    #     finally:
+    #         if cursor: cursor.close()
 
 async def setup(bot):
   
