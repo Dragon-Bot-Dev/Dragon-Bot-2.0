@@ -10,7 +10,61 @@ from utils import (
     get_cwl_data, format_datetime, format_month_day_year, ClanNotSetError,
     check_coc_clan_tag  # Ensure this is imported for setclantag!
 )
+class WarStatsView(discord.ui.View):
+    def __init__(self, attacked_data, unattacked_data, source_label, our_name, opp_name, timer_text, max_atks):
+        super().__init__(timeout=60) # Button works for 60 seconds
+        self.attacked = attacked_data
+        self.unattacked = unattacked_data
+        self.source_label = source_label
+        self.our_name = our_name
+        self.opp_name = opp_name
+        self.timer_text = timer_text
+        self.max_atks = max_atks
 
+    @discord.ui.button(label="Show Full Lineup", style=discord.ButtonStyle.secondary, emoji="📜")
+    async def show_full(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Generate the same embed but without slicing the lists
+        embed = self.create_stats_embed(full=True)
+        button.disabled = True # Disable button after use
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    def create_stats_embed(self, full=False):
+        embed = discord.Embed(
+            title=f"{self.source_label}: {self.our_name} vs {self.opp_name}",
+            description=f"**{self.timer_text}**",
+            color=0x3498db
+        )
+
+        # Helper to format lines
+        def format_entry(e):
+            # Keeps the alignment clean using a code block style
+            return f"`{e['rel_pos']:2}.` TH{e['th']:2} **{e['name']}**: {e['stars']}⭐ {e['pct']}% ({e['att']}/{self.max_atks}){e['diff']}"
+
+        def format_pending(e):
+            return f"`{e['rel_pos']:2}.` TH{e['th']:2} **{e['name']}**"
+
+        # Limit to 10 entries if not 'full'
+        limit = None if full else 10
+        
+        if self.attacked:
+            entries = [format_entry(e) for e in self.attacked[:limit]]
+            val = "\n".join(entries)
+            
+            # Character Limit Safety Check
+            if len(val) > 1000:
+                # If too long, we show the first 10-15 and tell them to check the game
+                val = "\n".join(entries[:15]) + f"\n*...and {len(entries)-15} more (List too long for Discord)*"
+            elif not full and len(self.attacked) > 10:
+                val += f"\n*...and {len(self.attacked)-10} more*"
+                
+            embed.add_field(name="✅ Attacked", value=val, inline=False)
+
+        if self.unattacked:
+            val = "\n".join([format_pending(e) for e in self.unattacked[:limit]])
+            if not full and len(self.unattacked) > 10: val += f"\n*...and {len(self.unattacked)-10} more*"
+            embed.add_field(name="❌ Pending", value=val, inline=False)
+
+        return embed
 class WarCommands(commands.Cog):
     def __init__(self, bot, coc_client): 
         self.bot = bot
@@ -19,8 +73,8 @@ class WarCommands(commands.Cog):
     @app_commands.command(name="currentwar", description="Get info or member stats for current war")
     @app_commands.describe(mode="Choose: info (Overview) or stats (Member details)")
     @app_commands.choices(mode=[
-        app_commands.Choice(name="Overall Information of War Results", value="info"),
-        app_commands.Choice(name="Shows each member's attacks, stars, and destruction", value="stats")
+        app_commands.Choice(name="General Info of War", value="info"),
+        app_commands.Choice(name="Shows member stats", value="stats")
     ])
 
     async def currentwar(self, interaction: discord.Interaction, mode: str = "info"):
@@ -125,13 +179,11 @@ class WarCommands(commands.Cog):
                 await interaction.followup.send(embed=embed)
                 # --- STATS MODE (YAML) ---
             elif mode.lower() == "stats":
-                # 1. Map opponent data
+            # 1. Map opponent data (Logic remains identical)
                 opp_th_map = {m.tag: m.town_hall for m in opp.members}
-                
                 our_sorted = sorted(our.members, key=lambda x: x.map_position)
                 active_our = our_sorted[:war_data.team_size]
                 
-                # --- Dynamic Timer for Stats Header ---
                 if war_data.state.value == "preparation":
                     time_diff = war_data.start_time.seconds_until
                     timer_label = "Battle Starts In"
@@ -140,7 +192,7 @@ class WarCommands(commands.Cog):
                     timer_label = "Time Remaining"
 
                 hours, minutes = time_diff // 3600, (time_diff % 3600) // 60
-                time_display = f"{hours}h {minutes}m"
+                time_display = f"{timer_label}: {hours}h {minutes}m"
                 
                 attacked, unattacked = [], []
                 
@@ -150,61 +202,44 @@ class WarCommands(commands.Cog):
                     
                     if atks:
                         th_diffs = [f"{(opp_th_map.get(a.defender_tag, m.town_hall) - m.town_hall):+}" for a in atks]
-                        # Corrected Mirror Logic: Current - Target
-                        # We use 'i' as current_rel_pos based on the sorted list
-                        mirr_diffs = [f"{(i - (next((index + 1 for index, opp_m in enumerate(sorted(opp.members, key=lambda x: x.map_position)[:war_data.team_size]) if opp_m.tag == a.defender_tag), i))):+}" for a in atks]
+                        # Mirror logic calculation
+                        opp_lineup = sorted(opp.members, key=lambda x: x.map_position)[:war_data.team_size]
+                        mirr_diffs = [f"{(i - (next((idx + 1 for idx, opp_m in enumerate(opp_lineup) if opp_m.tag == a.defender_tag), i))):+}" for a in atks]
                         diff_str = f" [TH:{','.join(th_diffs)} M:{','.join(mirr_diffs)}]"
 
                     # Name Trimming
                     display_name = m.name.strip()
-                    if len(display_name) > 10:
-                        display_name = f"{display_name[:8]}.."
+                    if len(display_name) > 10: display_name = f"{display_name[:8]}.."
 
                     entry = {
-                        "rel_pos": i,
-                        "th": m.town_hall,
-                        "name": display_name,
-                        "stars": sum(a.stars for a in atks),
-                        "pct": sum(a.destruction for a in atks),
-                        "att": len(atks),
-                        "diff": diff_str
+                        "rel_pos": i, "th": m.town_hall, "name": display_name,
+                        "stars": sum(a.stars for a in atks), "pct": int(sum(a.destruction for a in atks)),
+                        "att": len(atks), "diff": diff_str
                     }
                     
-                    if entry["att"] > 0:
-                        attacked.append(entry)
-                    else:
-                        unattacked.append(entry)
+                    if entry["att"] > 0: attacked.append(entry)
+                    else: unattacked.append(entry)
 
-                lines = [
-                    "```yaml",
-                    f"{source_label} War: {our.name} vs {opp.name}",
-                    f"State: {war_data.state.value.capitalize()}",
-                    f"{timer_label}: {time_display}",
-                    ""
-                ]
+                # --- NEW EMBED & VIEW LOGIC ---
+                # Use the class we built above
+                view = WarStatsView(
+                    attacked_data=attacked, 
+                    unattacked_data=unattacked, 
+                    source_label=source_label,
+                    our_name=our.name, 
+                    opp_name=opp.name, 
+                    timer_text=time_display,
+                    max_atks=max_attacks # Ensure this variable is defined in your scope
+                )
 
-                # If it's Preparation Day, just show one list of "Lineup"
-                if war_data.state.value == "preparation":
-                    lines.append("⚔️ Active Lineup")
-                    for e in unattacked:
-                        lines.append(f"{e['rel_pos']:2}. TH{e['th']:2} {e['name']}")
-                else:
-                    # Normal Battle Day view
-                    if attacked:
-                        lines.append("✅ Attacked")
-                        for e in attacked:
-                            lines.append(f"{e['rel_pos']:2}. TH{e['th']:2} {e['name']}: {e['stars']}⭐, {round(e['pct'], 1)}% ({e['att']}/{max_attacks}){e['diff']}")
-                    
-                    if unattacked:
-                        lines.append("\n❌ Pending Attacks")
-                        for e in unattacked:
-                            lines.append(f"{e['rel_pos']:2}. TH{e['th']:2} {e['name']}")
-
-                lines.append("```")
+                # Generate the summary embed (first 10)
+                initial_embed = view.create_stats_embed(full=False)
                 
-                final_yaml = "\n".join(lines)
-                # (Keep your character limit safety logic here)
-                await interaction.followup.send(final_yaml)
+                # Only show button if there are actually more than 10 people to show
+                if len(attacked) <= 10 and len(unattacked) <= 10:
+                    await interaction.followup.send(embed=initial_embed)
+                else:
+                    await interaction.followup.send(embed=initial_embed, view=view)
            
 
         except Exception as e:
@@ -507,23 +542,19 @@ class WarPatrol(commands.Cog):
 
     @tasks.loop(minutes=20)
     async def war_reminder(self):
-        # 1. HEARTBEAT & DB ACQUISITION
         print("--- [War Reminder Heartbeat] ---")
         cursor = await get_safe_cursor(retries=3, delay=5)
-        if not cursor:
-            return
+        if not cursor: return
 
         try:
-            # Fetch all servers
             cursor.execute("SELECT clan_tag, guild_id, war_channel_id, last_war_reminder FROM servers")
             tracked_clans = cursor.fetchall()
 
             for clan_tag, guild_id, war_channel_id, last_sent in tracked_clans:
-                if not clan_tag or not war_channel_id:
-                    continue 
+                if not clan_tag or not war_channel_id: continue 
 
                 try:
-                    # 2. FETCH DATA & FALLBACK
+                    # 2. FETCH DATA
                     war_data = await self.coc_client.get_current_war(clan_tag)
                     if not war_data or war_data.state == "notInWar":
                         try:
@@ -531,17 +562,27 @@ class WarPatrol(commands.Cog):
                             if group:
                                 async for cwl_war in group.get_wars_for_clan(clan_tag):
                                     if cwl_war.state != "notInWar":
-                                        war_data = cwl_war
-                                        break
-                        except coc.NotFound:
-                            pass
+                                        war_data = cwl_war; break
+                        except: pass
 
-                    # 3. RESET LOGIC: Clear DB flag if war ended or hasn't started
-                    if not war_data or war_data.state != "inWar":
+                    # 3. TRANSITION & SUMMARY LOGIC
+                    # Check if war just ended
+                    if war_data and war_data.state == "warEnded":
+                        if last_sent != "summary_sent":
+                            await self.send_war_result_summary(war_channel_id, war_data, clan_tag)
+                            cursor.execute("UPDATE servers SET last_war_reminder = 'summary_sent' WHERE clan_tag = %s", (clan_tag,))
+                            get_db_connection().commit()
+                        continue
+
+                    # Reset flag if a new war is in preparation
+                    if not war_data or war_data.state == "preparation":
                         if last_sent is not None:
                             cursor.execute("UPDATE servers SET last_war_reminder = NULL WHERE clan_tag = %s", (clan_tag,))
                             get_db_connection().commit()
                         continue
+
+                    # Only proceed to reminders if the state is exactly "inWar"
+                    if war_data.state != "inWar": continue
 
                     # 4. TIME & TRIGGER LOGIC
                     seconds_left = war_data.end_time.seconds_until
@@ -643,114 +684,38 @@ class WarPatrol(commands.Cog):
             if cursor:
                 cursor.close()
 
+    async def send_war_summary(self, guild_id, channel_id, war, tag):
+        channel = self.bot.get_channel(int(channel_id)) or await self.bot.fetch_channel(int(channel_id))
+        if not channel: return
+
+        our = war.clan if war.clan.tag == tag else war.opponent
+        opp = war.opponent if war.clan.tag == tag else war.clan
+
+        # Determine Result with Draw handling
+        if our.stars > opp.stars or (our.stars == opp.stars and our.destruction > opp.destruction):
+            result_text, color = "🏆 VICTORY", 0x00ff00
+        elif our.stars == opp.stars and our.destruction == opp.destruction:
+            result_text, color = "DRAW", 0xffff00 # Yellow
+        else:
+            result_text, color = "DEFEAT", 0xff0000
+
+        embed = discord.Embed(
+            title=f"War Results: {our.name} vs {opp.name}",
+            description=f"**Result:** {result_text}",
+            color=color
+        )
+
+        embed.add_field(name=f"{our.name}", value=f"⭐ `{our.stars}`\n💥 `{round(our.destruction, 1)}%`", inline=True)
+        embed.add_field(name=f"{opp.name}", value=f"⭐ `{opp.stars}`\n💥 `{round(opp.destruction, 1)}%`", inline=True)
+        
+        embed.set_footer(text="War concluded. Use /currentwar stats for details.")
+        await channel.send(content="🎖️ **The War has ended!**", embed=embed)
+
+        
+
     @war_reminder.before_loop
     async def before_war_reminder(self):
         await self.bot.wait_until_ready()
-
-    # @app_commands.command(name="test_war_reminder", description="DEBUG: Preview War reminder and ping logic")
-    # @app_commands.describe(force_mode="Simulate a specific window (Warning vs Final)")
-    # @app_commands.choices(force_mode=[
-    #     app_commands.Choice(name="4h Warning (Bold Names)", value="warning"),
-    #     app_commands.Choice(name="1h Final (Pings/Mentions)", value="final")
-    # ])
-    # @app_commands.checks.has_permissions(administrator=True)
-    # async def test_war_reminder(self, interaction: discord.Interaction, force_mode: str = None):
-    #     await interaction.response.defer(ephemeral=True)
-        
-    #     cursor = await get_safe_cursor(retries=3, delay=5)
-    #     try:
-    #         guild_id = str(interaction.guild.id)
-            
-    #         # 1. FETCH CONFIG
-    #         cursor.execute("SELECT clan_tag, war_channel_id, last_war_reminder FROM servers WHERE guild_id = %s", (guild_id,))
-    #         row = cursor.fetchone()
-    #         if not row or not row[0]:
-    #             return await interaction.followup.send("❌ Clan tag not configured.")
-            
-    #         clan_tag, war_channel_id, last_sent = row
-
-    #         # 2. FETCH WAR DATA
-    #         war_data = await self.coc_client.get_current_war(clan_tag)
-    #         # CWL Fallback
-    #         if not war_data or war_data.state == "notInWar":
-    #             try:
-    #                 group = await self.coc_client.get_league_group(clan_tag)
-    #                 if group:
-    #                     async for cwl_war in group.get_wars_for_clan(clan_tag):
-    #                         if cwl_war.state != "notInWar":
-    #                             war_data = cwl_war
-    #                             break
-    #             except: pass
-
-    #         if not war_data or war_data.state == "notInWar":
-    #             return await interaction.followup.send("💤 No active war found to simulate.")
-
-    #         # 3. TRIGGER SIMULATION
-    #         seconds_left = war_data.end_time.seconds_until
-    #         hours_left = seconds_left / 3600
-            
-    #         # Use forced mode if provided, otherwise use real time
-    #         simulated_type = force_mode if force_mode else ("final" if hours_left <= 1 else "warning" if hours_left <= 4 else "None")
-
-    #         # 4. SLACKER IDENTIFICATION (The "Ping Gate")
-    #         max_atks = getattr(war_data, 'attacks_per_member', 0)
-    #         if max_atks == 0:
-    #             is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
-    #             max_atks = 1 if is_cwl else 2
-
-    #         our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
-    #         active_lineup = our_members[:war_data.team_size]
-            
-    #         cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (guild_id,))
-    #         links = {r[0]: r[1] for r in cursor.fetchall()}
-
-    #         unattacked_lines = []
-    #         for m in active_lineup:
-    #             if len(m.attacks) < max_atks:
-    #                 d_id = links.get(m.tag)
-    #                 if d_id:
-    #                     user = self.bot.get_user(int(d_id))
-    #                     if user:
-    #                         # THE LOGIC GATE TEST
-    #                         if simulated_type == "final":
-    #                             mention = user.mention # Should show blue/ping
-    #                         else:
-    #                             mention = f"**{user.display_name}**" # Should show bold text
-    #                     else:
-    #                         mention = f"**{m.name[:10]}**"
-    #                 else:
-    #                     mention = f"**{m.name[:10]}**"
-                    
-    #                 unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks)} left)")
-
-    #         # 5. GENERATE REPORT
-    #         try:
-    #             unix_ts = int(war_data.end_time.time.timestamp())
-    #         except AttributeError:
-    #             unix_ts = int(war_data.end_time.timestamp())
-
-    #         report = (
-    #             f"📊 **War Logic Simulation**\n"
-    #             f"• Real Time Left: `{hours_left:.2f}h`\n"
-    #             f"• Simulating Window: `{simulated_type.upper()}`\n"
-    #             f"• **Expected Output:** `{'Blue Mentions/Pings' if simulated_type == 'final' else 'Bold Plain Text'}`\n"
-    #             f"--------------------------------"
-    #         )
-
-    #         embed = discord.Embed(
-    #             title=f"{'🚨 FINAL HOUR' if simulated_type == 'final' else '⏳ 4 HOURS LEFT'}: War Status",
-    #             color=0xe74c3c if simulated_type == "final" else 0xf1c40f
-    #         )
-    #         embed.add_field(name="⚠️ Pending Hits", value="\n".join(unattacked_lines[:25]) or "None!")
-    #         embed.add_field(name="⏳ Ends", value=f"<t:{unix_ts}:R>", inline=True)
-    #         embed.set_footer(text=f"Test Mode: {simulated_type} | DB Last: {last_sent}")
-
-    #         await interaction.followup.send(content=report, embed=embed)
-
-    #     except Exception as e:
-    #         await interaction.followup.send(f"❌ Simulation Error: `{e}`")
-    #     finally:
-    #         if cursor: cursor.close()
 
 async def setup(bot):
   
