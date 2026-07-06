@@ -506,8 +506,11 @@ class BotCommands(commands.Cog):
             cursor = conn.cursor(buffered=True)
             guild_id = str(interaction.guild.id)
             
-            # 1. Fetch server configuration (clan tag, reminder channels)
-            cursor.execute("SELECT clan_tag, war_channel_id, raid_channel_id FROM servers WHERE guild_id = %s", (guild_id,))
+            # Updated to fetch the new custom interval values from the database
+            cursor.execute(
+                "SELECT clan_tag, war_channel_id, raid_channel_id, war_reminder_1, war_reminder_2 FROM servers WHERE guild_id = %s", 
+                (guild_id,)
+            )
             row = cursor.fetchone()
             
             if row:
@@ -516,21 +519,42 @@ class BotCommands(commands.Cog):
                 clan_tag = f"`{raw_clan_tag}`" if raw_clan_tag else "`❌ Not Set`"
                 war_mention = f"<#{row[1]}>" if row[1] else "`❌ Not Configured`"
                 raid_mention = f"<#{row[2]}>" if row[2] else "`❌ Not Configured`"
+                
+                # Assign custom intervals, mapping to defaults if somehow missing
+                t1_hours = row[3] if row[3] is not None else 4
+                t2_hours = row[4] if row[4] is not None else 1
+                
+                timer_details = f"• Timer 1: `{t1_hours}h left`"
+                if t2_hours > 0:
+                    timer_details += f"\n• Timer 2: `{t2_hours}h left` (Ping Active)"
+                else:
+                    timer_details += "\n• Timer 2: `Disabled`"
             else:
                 clan_tag = "`❌ Run /setclantag to configure`"
                 war_mention = "`❌ Not Configured`"
                 raid_mention = "`❌ Not Configured`"
+                timer_details = "`❌ Not Configured`"
 
+            # 2. Fetch Linked Players
+            cursor.execute("SELECT discord_username, player_tag FROM players WHERE guild_id = %s", (guild_id,))
+            players = cursor.fetchall()
+            player_info = "\n".join([f"• @{u} (`{t}`)" for u, t in players]) if players else "` No Linked Members `"
+
+            # 3. Build the Polished Embed
             embed = discord.Embed(
                 title=f"🛡️ {interaction.guild.name} Configuration",
                 color=0x3498db,
                 timestamp=interaction.created_at
             )
             
-            # Formatting correction: display clan_tag as string, not double backticks
-            embed.add_field(name="Current Clan", value=clan_tag, inline=False)
-            embed.add_field(name="⚔️ War Reminders", value=war_mention, inline=True)
-            embed.add_field(name="🏰 Raid Reminders", value=raid_mention, inline=True)
+            embed.add_field(name="Current Clan", value=f"{clan_tag}", inline=False)
+            embed.add_field(name="⚔️ War Reminders Channel", value=war_mention, inline=True)
+            embed.add_field(name="🏰 Raid Reminders Channel", value=raid_mention, inline=True)
+            
+            # Clear new field displaying custom configuration states
+            embed.add_field(name="⏱️ Custom War Intervals", value=timer_details, inline=False)
+
+            embed.add_field(name="Linked Members", value=player_info, inline=False)
             
             embed.set_footer(text=f"Serving {len(self.bot.guilds)} servers | {len(self.bot.users)} users")
             
@@ -543,61 +567,60 @@ class BotCommands(commands.Cog):
             import traceback
             traceback.print_exc()
             await interaction.followup.send(f"❌ Error fetching status: `{e}`")
-
-    @app_commands.command(name='setclantag', description="Set the clan tag and optional reminder channels")
+    @app_commands.command(name='setclantag', description="Set the clan tag and custom reminder channels/times")
     @app_commands.describe(
         new_tag="The #ClanTag", 
         war_channel="Optional: Channel for war reminders",
-        raid_channel="Optional: Channel for capital raid reminders"
+        raid_channel="Optional: Channel for capital raid reminders",
+        reminder_hours_1="Optional: Primary war reminder time (e.g. 6 for 6h left)",
+        reminder_hours_2="Optional: Secondary war reminder time (e.g. 2 for 2h left. Set 0 to disable)"
     )
     async def set_clan_tag(
         self, 
         interaction: discord.Interaction, 
         new_tag: str, 
         war_channel: discord.TextChannel = None,
-        raid_channel: discord.TextChannel = None
+        raid_channel: discord.TextChannel = None,
+        reminder_hours_1: int = None,
+        reminder_hours_2: int = None
     ):
         clean_tag = new_tag.strip().upper()
         if not clean_tag.startswith("#"): 
             clean_tag = f"#{clean_tag}"
         
-        # 1. Validate the Tag with CoC API
         if not await check_coc_clan_tag(clean_tag):
             return await interaction.response.send_message("❌ Invalid Clan Tag. Please check the tag in-game.", ephemeral=True)
 
         cursor = get_db_cursor()
         guild_id = str(interaction.guild.id)
         
-        # 2. Advanced Upsert Logic
-        # We use COALESCE in the UPDATE section. 
-        # This says: "If the new value is NULL, keep the old value that's already in the table."
-        
+        # SQL Updated to handle upserts for the new configuration columns
         sql = """
-            INSERT INTO servers (guild_id, guild_name, clan_tag, war_channel_id, raid_channel_id)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO servers (guild_id, guild_name, clan_tag, war_channel_id, raid_channel_id, war_reminder_1, war_reminder_2)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE 
                 clan_tag = VALUES(clan_tag),
                 guild_name = VALUES(guild_name),
                 war_channel_id = COALESCE(VALUES(war_channel_id), war_channel_id),
-                raid_channel_id = COALESCE(VALUES(raid_channel_id), raid_channel_id)
+                raid_channel_id = COALESCE(VALUES(raid_channel_id), raid_channel_id),
+                war_reminder_1 = COALESCE(VALUES(war_reminder_1), war_reminder_1),
+                war_reminder_2 = COALESCE(VALUES(war_reminder_2), war_reminder_2)
         """
         
-        # Convert objects to string IDs only if they were provided
         war_id = str(war_channel.id) if war_channel else None
         raid_id = str(raid_channel.id) if raid_channel else None
         
-        cursor.execute(sql, (guild_id, interaction.guild.name, clean_tag, war_id, raid_id))
+        cursor.execute(sql, (guild_id, interaction.guild.name, clean_tag, war_id, raid_id, reminder_hours_1, reminder_hours_2))
 
-        # 3. Build a nice confirmation message
+        get_db_connection().commit() 
+        cursor.close()
         msg = f"✅ **Clan Linked:** `{clean_tag}`\n"
-        if war_channel:
-            msg += f"⚔️ War Reminders: {war_channel.mention}\n"
-        if raid_channel:
-            msg += f"🏰 Raid Reminders: {raid_channel.mention}\n"
+        if war_channel: msg += f"War Reminders: {war_channel.mention}\n"
+        if raid_channel: msg += f"Raid Reminders: {raid_channel.mention}\n"
+        if reminder_hours_1 is not None: msg += f"Custom Timer 1: Set to **{reminder_hours_1} hours** remaining.\n"
+        if reminder_hours_2 is not None: 
+            msg += f"Custom Timer 2: Set to **{reminder_hours_2} hours** remaining.\n" if reminder_hours_2 > 0 else "⏱️ Custom Timer 2: **Disabled**.\n"
         
-        if not war_channel and not raid_channel:
-            msg += "*(Reminder channels were not changed)*"
-
         await interaction.response.send_message(msg)
 
     # --- STORE SESSION DATABASE HELPERS ---
@@ -891,7 +914,8 @@ class BotCommands(commands.Cog):
 
         try:
             cursor.execute(sql, (guild_id,))
-            # commit is usually handled inside get_db_cursor or at the end of execution
+            get_db_connection().commit() # If your cursor helper doesn't auto-commit
+            cursor.close()
             
             await interaction.followup.send(f"✅ {label} have been disabled for this server.")
         except Exception as e:

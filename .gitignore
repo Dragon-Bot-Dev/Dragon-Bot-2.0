@@ -16,7 +16,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-#Supercell Store Claimer Session Secrets
+# Supercell Store Claimer Session Secrets
 config/auth.json
 config/browser_config.json
 current_missions.json
