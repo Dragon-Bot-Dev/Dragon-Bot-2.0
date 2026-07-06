@@ -15,3 +15,8 @@ __pycache__/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Supercell Store Claimer Session Secrets
+config/auth.json
+config/browser_config.json
+current_missions.json
