@@ -178,8 +178,8 @@ class WarCommands(commands.Cog):
                 
                 await interaction.followup.send(embed=embed)
                 # --- STATS MODE (YAML) ---
+            # --- STATS MODE (YAML) ---
             elif mode.lower() == "stats":
-            # 1. Map opponent data (Logic remains identical)
                 opp_th_map = {m.tag: m.town_hall for m in opp.members}
                 our_sorted = sorted(our.members, key=lambda x: x.map_position)
                 active_our = our_sorted[:war_data.team_size]
@@ -202,14 +202,13 @@ class WarCommands(commands.Cog):
                     
                     if atks:
                         th_diffs = [f"{(opp_th_map.get(a.defender_tag, m.town_hall) - m.town_hall):+}" for a in atks]
-                        # Mirror logic calculation
                         opp_lineup = sorted(opp.members, key=lambda x: x.map_position)[:war_data.team_size]
                         mirr_diffs = [f"{(i - (next((idx + 1 for idx, opp_m in enumerate(opp_lineup) if opp_m.tag == a.defender_tag), i))):+}" for a in atks]
                         diff_str = f" [TH:{','.join(th_diffs)} M:{','.join(mirr_diffs)}]"
 
-                    # Name Trimming
                     display_name = m.name.strip()
-                    if len(display_name) > 10: display_name = f"{display_name[:8]}.."
+                    if len(display_name) > 10: 
+                        display_name = f"{display_name[:8]}.."
 
                     entry = {
                         "rel_pos": i, "th": m.town_hall, "name": display_name,
@@ -217,30 +216,37 @@ class WarCommands(commands.Cog):
                         "att": len(atks), "diff": diff_str
                     }
                     
-                    if entry["att"] > 0: attacked.append(entry)
-                    else: unattacked.append(entry)
+                    if entry["att"] > 0: 
+                        attacked.append(entry)
+                    else: 
+                        unattacked.append(entry)
 
-                # --- NEW EMBED & VIEW LOGIC ---
-                # Use the class we built above
-                view = WarStatsView(
-                    attacked_data=attacked, 
-                    unattacked_data=unattacked, 
-                    source_label=source_label,
-                    our_name=our.name, 
-                    opp_name=opp.name, 
-                    timer_text=time_display,
-                    max_atks=max_attacks # Ensure this variable is defined in your scope
-                )
-
-                # Generate the summary embed (first 10)
-                initial_embed = view.create_stats_embed(full=False)
+                # 2. Build the Raw YAML Layout String
+                lines = [
+                    f"War_Type: {source_label}",
+                    f"Matchup: {our.name} vs {opp.name}",
+                    f"Status: {time_display}",
+                    "",
+                    "Attacked_Lineup:"
+                ]
                 
-                # Only show button if there are actually more than 10 people to show
-                if len(attacked) <= 10 and len(unattacked) <= 10:
-                    await interaction.followup.send(embed=initial_embed)
+                for e in attacked:
+                    lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
+                
+                lines.append("")
+                lines.append("Pending_Attacks:")
+                for e in unattacked:
+                    lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
+
+                yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
+                
+                # 3. Message Chunking Guard (Bypasses character limitations)
+                if len(yaml_msg) > 2000:
+                    chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
+                    for chunk in chunks:
+                        await interaction.followup.send(chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
                 else:
-                    await interaction.followup.send(embed=initial_embed, view=view)
-           
+                    await interaction.followup.send(yaml_msg)
 
         except Exception as e:
             await interaction.followup.send(f"Error: {e}")
@@ -613,7 +619,7 @@ class WarPatrol(commands.Cog):
                     active_lineup = our_members[:war_data.team_size]
                     
                     # 🔗 REINSTATED PLAYER DICTIONARY LOOKUP (Fixes NameError)
-                    cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (str(guild_id),))
+                    cursor.execute("SELECT player_tag, discord_id FROM players")
                     links = {row[0]: row[1] for row in cursor.fetchall()}
                     
                     unattacked_lines = []
@@ -680,7 +686,7 @@ class WarPatrol(commands.Cog):
         channel = self.bot.get_channel(int(channel_id)) or await self.bot.fetch_channel(int(channel_id))
         if not channel: return
 
-        # Identify 'our' vs 'opp'
+        # Identify 'our' vs 'opp' (Logic remains identical)
         our = war.clan if war.clan.tag == tag else war.opponent
         opp = war.opponent if war.clan.tag == tag else war.clan
 
@@ -689,9 +695,8 @@ class WarPatrol(commands.Cog):
         draw = our.stars == opp.stars and our.destruction == opp.destruction
         
         result_text = "🏆 VICTORY" if won else "🤝 DRAW" if draw else "DEFEAT"
-        embed_color = 0x00ff00 if won else 0xffff00 if draw else 0xff0000
 
-        # 2. Process Member Stats (Logic from your currentwar command)
+        # 2. Process Member Stats (Logic remains identical)
         opp_th_map = {m.tag: m.town_hall for m in opp.members}
         max_atks = getattr(war, 'attacks_per_member', 2)
         attacked, unattacked = [], []
@@ -710,19 +715,40 @@ class WarPatrol(commands.Cog):
             if entry["att"] > 0: attacked.append(entry)
             else: unattacked.append(entry)
 
-        # 3. Create the View & Initial Embed
+        # 3. Build the Raw YAML Layout String
         source_label = "CWL" if max_atks == 1 else "Standard"
-        view = WarStatsView(attacked, unattacked, source_label, our.name, opp.name, f"Result: {result_text}", max_atks)
         
-        # Use the class method to generate the base embed
-        embed = view.create_stats_embed(full=False)
-        embed.color = embed_color # Apply our result color
+        lines = [
+            f"Result: {result_text}",
+            f"War_Type: {source_label}",
+            f"Scoreboard:",
+            f"  {our.name}: {our.stars}⭐ ({round(our.destruction, 1)}%)",
+            f"  {opp.name}: {opp.stars}⭐ ({round(opp.destruction, 1)}%)",
+            "",
+            "Final_Attacked_Lineup:"
+        ]
         
-        # Add summary fields to the top
-        embed.insert_field_at(0, name=f"{our.name}", value=f"⭐ `{our.stars}` | 💥 `{round(our.destruction, 1)}%`", inline=True)
-        embed.insert_field_at(1, name=f"{opp.name}", value=f"⭐ `{opp.stars}` | 💥 `{round(opp.destruction, 1)}%`", inline=True)
+        for e in attacked:
+            lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
+        
+        if unattacked:
+            lines.append("")
+            lines.append("Unused_Attacks:")
+            for e in unattacked:
+                lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
 
-        await channel.send(content=f"🎖️ **The War has ended!** {result_text}", embed=embed, view=view)
+        yaml_msg = f"🎖️ **The War has ended!**\n```yaml\n" + "\n".join(lines) + "\n```"
+        
+        # 4. Message Chunking Guard (Bypasses character limitations)
+        if len(yaml_msg) > 2000:
+            chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
+            for idx, chunk in enumerate(chunks):
+                if idx == 0:
+                    await channel.send(content=chunk if chunk.startswith("🎖️") else f"```yaml\n{chunk}\n```")
+                else:
+                    await channel.send(content=chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
+        else:
+            await channel.send(content=yaml_msg)
 
         
 
