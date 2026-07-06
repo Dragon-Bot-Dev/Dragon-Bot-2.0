@@ -536,9 +536,17 @@ class BotCommands(commands.Cog):
                 timer_details = "`❌ Not Configured`"
 
             # 2. Fetch Linked Players
+            # 2. Fetch All Globally Linked Players
             cursor.execute("SELECT discord_username, player_tag, discord_id FROM players")
-            players = cursor.fetchall()
-            player_info = "\n".join([f"• @{u} (`{t}`)" for u, t in players]) if players else "` No Linked Members `"
+            all_linked_players = cursor.fetchall()
+            
+            # Filter to only show players who are actually members of this server
+            server_players = []
+            for username, player_tag, discord_id in all_linked_players:
+                if interaction.guild.get_member(int(discord_id)) is not None:
+                    server_players.append(f"• @{username} (`{player_tag}`)")
+            
+            player_info = "\n".join(server_players) if server_players else "` No Linked Members in this Server `"
 
             # 3. Build the Polished Embed
             embed = discord.Embed(
