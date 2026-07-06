@@ -555,10 +555,8 @@ class WarPatrol(commands.Cog):
                 if not clan_tag or not war_channel_id: continue 
 
                 try:
-                    # 3. FETCH WAR DATA
+                    # 2. FETCH DATA
                     war_data = await self.coc_client.get_current_war(clan_tag)
-                    
-                    # CWL Check
                     if not war_data or war_data.state == "notInWar":
                         try:
                             group = await self.coc_client.get_league_group(clan_tag)
@@ -601,7 +599,7 @@ class WarPatrol(commands.Cog):
                     # If we don't fall into a valid untriggered window, slide out early
                     if reminder_type == "None": continue
 
-                    # 6. IDENTIFY SLACKERS
+                    # 5. ATTACK LIMIT & SLACKER IDENTIFICATION
                     max_atks = getattr(war_data, 'attacks_per_member', 0)
                     if max_atks == 0:
                         is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
@@ -614,11 +612,13 @@ class WarPatrol(commands.Cog):
                     our_members = sorted(war_data.clan.members, key=lambda x: x.map_position or 99)
                     active_lineup = our_members[:war_data.team_size]
                     
+                    # 🔗 REINSTATED PLAYER DICTIONARY LOOKUP (Fixes NameError)
+                    cursor.execute("SELECT player_tag, discord_id FROM players WHERE guild_id = %s", (str(guild_id),))
+                    links = {row[0]: row[1] for row in cursor.fetchall()}
+                    
                     unattacked_lines = []
                     for m in active_lineup:
-                        atks_left = max_atks - len(m.attacks or [])
-                        if atks_left > 0:
-                            # 🔗 Global Lookup (No guild_id needed)
+                        if len(m.attacks) < max_atks:
                             d_id = links.get(m.tag)
                             
                             if d_id:
@@ -633,7 +633,7 @@ class WarPatrol(commands.Cog):
                                 
                             unattacked_lines.append(f"{m.map_position}. {mention} ({max_atks - len(m.attacks or [])} left)")
 
-                    # 7. SEND REMINDER
+                    # 6. SEND REMINDER (Only if there are slackers)
                     if unattacked_lines:
                         channel = self.bot.get_channel(int(war_channel_id)) or await self.bot.fetch_channel(int(war_channel_id))
                         
@@ -673,7 +673,8 @@ class WarPatrol(commands.Cog):
         except Exception as db_e:
             print(f"❌ Database Loop Error: {db_e}")
         finally:
-            if cursor: cursor.close()
+            if cursor:
+                cursor.close()
 
     async def send_war_summary(self, guild_id, channel_id, war, tag):
         channel = self.bot.get_channel(int(channel_id)) or await self.bot.fetch_channel(int(channel_id))

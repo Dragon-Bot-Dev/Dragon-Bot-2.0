@@ -536,7 +536,7 @@ class BotCommands(commands.Cog):
                 timer_details = "`❌ Not Configured`"
 
             # 2. Fetch Linked Players
-            cursor.execute("SELECT discord_username, player_tag FROM players WHERE guild_id = %s", (guild_id,))
+            cursor.execute("SELECT discord_username, player_tag, discord_id FROM players")
             players = cursor.fetchall()
             player_info = "\n".join([f"• @{u} (`{t}`)" for u, t in players]) if players else "` No Linked Members `"
 
