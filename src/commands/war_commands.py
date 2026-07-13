@@ -223,20 +223,20 @@ class WarCommands(commands.Cog):
 
                 # 2. Build the Raw YAML Layout String
                 lines = [
-                    f"War_Type: {source_label}",
+                    f"{source_label} War",
                     f"Matchup: {our.name} vs {opp.name}",
                     f"Status: {time_display}",
                     "",
-                    "Attacked_Lineup:"
+                    "Attacked Lineup:"
                 ]
                 
                 for e in attacked:
-                    lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
+                    lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
                 
                 lines.append("")
-                lines.append("Pending_Attacks:")
+                lines.append("Pending Attacks:")
                 for e in unattacked:
-                    lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
+                    lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
 
                 yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
                 
@@ -720,24 +720,24 @@ class WarPatrol(commands.Cog):
         
         lines = [
             f"Result: {result_text}",
-            f"War_Type: {source_label}",
+            f"{source_label} War",
             f"Scoreboard:",
-            f"  {our.name}: {our.stars}⭐ ({round(our.destruction, 1)}%)",
-            f"  {opp.name}: {opp.stars}⭐ ({round(opp.destruction, 1)}%)",
+            f" {our.name}: {our.stars}⭐ ({round(our.destruction, 1)}%)",
+            f" {opp.name}: {opp.stars}⭐ ({round(opp.destruction, 1)}%)",
             "",
-            "Final_Attacked_Lineup:"
+            "Attacked Lineup:"
         ]
         
         for e in attacked:
-            lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
+            lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}: {e['stars']}⭐ {e['pct']}% ({e['att']}/{max_atks}){e['diff']}")
         
         if unattacked:
             lines.append("")
-            lines.append("Unused_Attacks:")
+            lines.append("Unused Attacks:")
             for e in unattacked:
-                lines.append(f"  - {e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
+                lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
 
-        yaml_msg = f"🎖️ **The War has ended!**\n```yaml\n" + "\n".join(lines) + "\n```"
+        yaml_msg = f"**The War has ended!**\n```yaml\n" + "\n".join(lines) + "\n```"
         
         # 4. Message Chunking Guard (Bypasses character limitations)
         if len(yaml_msg) > 2000:
