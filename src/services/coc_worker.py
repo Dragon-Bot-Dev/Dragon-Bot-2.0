@@ -1,7 +1,7 @@
-# src/services/coc_worker.py
 import asyncio
 import random
 import json
+import re
 from pathlib import Path
 from playwright.async_api import async_playwright
 
@@ -12,7 +12,6 @@ def clean_and_format_cookies(raw_cookies_list):
     """
     cleaned = []
     for cookie in raw_cookies_list:
-        # Build base dictionary
         c = {
             "name": cookie.get("name"),
             "value": cookie.get("value"),
@@ -20,7 +19,6 @@ def clean_and_format_cookies(raw_cookies_list):
             "path": cookie.get("path", "/"),
         }
         
-        # Translate expiration parameters
         if "expirationDate" in cookie:
             c["expires"] = cookie["expirationDate"]
         elif "expires" in cookie:
@@ -31,21 +29,19 @@ def clean_and_format_cookies(raw_cookies_list):
         if "secure" in cookie:
             c["secure"] = cookie["secure"]
             
-        # Translate SameSite restrictions
         same_site = cookie.get("sameSite", "Lax")
         if same_site == "no_restriction":
             c["sameSite"] = "None"
         elif same_site in ["Lax", "Strict", "None"]:
             c["sameSite"] = same_site
         else:
-            c["sameSite"] = "Lax" # Safe default fallback
+            c["sameSite"] = "Lax"
             
         cleaned.append(c)
     return cleaned
 
 async def run_mission_worker(player_tag: str, cookies_json_str: str):
     try:
-        # 1. Parse and clean the raw cookie data
         raw_cookies = json.loads(cookies_json_str)
         playwright_cookies = clean_and_format_cookies(raw_cookies)
     except Exception as e:
@@ -53,71 +49,99 @@ async def run_mission_worker(player_tag: str, cookies_json_str: str):
 
     results = {"success": False, "claimed": 0, "missions": []}
 
-    # Standard browser user-agent to ensure natural behavior on Railway containers
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
     async with async_playwright() as p:
-        # Launch headless for high-efficiency container execution
         browser = await p.chromium.launch(headless=True) 
         
-        # Open a fresh context
+        # Enforce English locale so store text selectors always match
         context = await browser.new_context(
             user_agent=user_agent,
-            viewport={'width': 1000, 'height': 800}
+            viewport={'width': 1280, 'height': 800},
+            locale="en-US"
         )
         
-        # 2. Inject the cleaned cookies directly into the session!
         await context.add_cookies(playwright_cookies)
         page = await context.new_page()
 
         try:
-            # Navigate directly to store
-            await page.goto("https://store.supercell.com/clashofclans", wait_until="networkidle", timeout=30000)
+            await page.goto("https://store.supercell.com/clashofclans", wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(2000)
 
-            # Verification: Check if browser is redirected back to the Log In stage
-            login_btn = page.get_by_role("button", name="Log In")
+            # --- 1. DISMISS COOKIE CONSENT BANNERS ---
             try:
-                await login_btn.wait_for(state="visible", timeout=4000)
-                return {"success": False, "error": "Auth cookies expired or invalid. Please re-export and run /register again."}
-            except:
-                pass # Successfully logged in via cookies!
+                accept_btn = page.get_by_role("button", name=re.compile(r"accept|agree|allow|ok", re.IGNORECASE))
+                if await accept_btn.is_visible(timeout=3000):
+                    await accept_btn.click(force=True)
+            except Exception:
+                pass
 
-            # Trigger Web Store Modal elements
+            # --- 2. AUTHENTICATION CHECK ---
+            login_btn = page.get_by_role("button", name=re.compile(r"log in", re.IGNORECASE))
+            try:
+                if await login_btn.is_visible(timeout=3000):
+                    return {"success": False, "error": "Auth cookies expired or invalid. Please re-export and run /link again."}
+            except Exception:
+                pass
+
+            # --- 3. TRIGGER BONUS TRACK MODAL ---
+            # Scroll down to ensure bottom bar components mount
             await page.mouse.wheel(0, 500) 
             await page.wait_for_timeout(1500) 
 
-            bottom_bar = page.get_by_text("BONUSES TO CLAIM", exact=False)
-            if not await bottom_bar.is_visible():
-                bottom_bar = page.get_by_text("to next Store bonus", exact=False)
+            # Check if Bonus Track modal is already open
+            modal_open = False
+            bonus_header = page.get_by_text(re.compile(r"bonus track", re.IGNORECASE))
+            if await bonus_header.is_visible(timeout=2000):
+                modal_open = True
 
-            await bottom_bar.click(force=True)
-            await page.wait_for_selector("text=BONUS TRACK", timeout=8000)
+            if not modal_open:
+                # Candidates to trigger the bottom bonus bar
+                triggers = [
+                    page.get_by_text(re.compile(r"bonuses to claim", re.IGNORECASE)),
+                    page.get_by_text(re.compile(r"to next store bonus", re.IGNORECASE)),
+                    page.get_by_text(re.compile(r"store bonus", re.IGNORECASE)),
+                    page.locator('[class*="bonusTrack"]'),
+                    page.locator('[class*="bottomBar"]')
+                ]
 
-            # --- TAB 1: BONUSES ---
-            claim_btns = page.get_by_role("button", name="CLAIM",exact = True)
+                clicked = False
+                for trigger in triggers:
+                    try:
+                        first_match = trigger.first
+                        if await first_match.is_visible(timeout=2000):
+                            await first_match.click(force=True)
+                            clicked = True
+                            break
+                    except Exception:
+                        continue
+
+                # Fallback: Click near bottom-center of window where the sticky bar resides
+                if not clicked:
+                    await page.mouse.click(640, 750)
+
+            # Wait for Bonus Track modal to load
+            await page.get_by_text(re.compile(r"bonus track", re.IGNORECASE)).wait_for(timeout=10000)
+
+            # --- TAB 1: CLAIM BONUSES ---
+            claim_btns = page.get_by_role("button", name="CLAIM", exact=True)
             actual_claims = 0
             
-            # Re-fetch count after filtering for exact matches
             button_count = await claim_btns.count()
-            
             if button_count > 0:
                 for i in range(button_count):
                     try:
-                        # Always click the first one available in the list
                         await claim_btns.nth(0).click(force=True, timeout=5000)
                         actual_claims += 1
                         await page.wait_for_timeout(random.randint(1500, 2500))
-                    except:
+                    except Exception:
                         continue
                 
                 results["claimed"] = actual_claims
 
-            # --- TAB 1: BONUSES (After claiming loop) ---
-            
+            # --- NEXT REWARD PROGRESS ---
             try:
                 await page.wait_for_timeout(1000)
-                
-                # 2. Get all bonus track items using a partial class match
                 bonus_items = page.locator('[class*="bonusTrackItem_item__"]')
                 count = await bonus_items.count()
                 
@@ -125,21 +149,19 @@ async def run_mission_worker(player_tag: str, cookies_json_str: str):
                     item = bonus_items.nth(i)
                     content = await item.inner_text()
                     
-                    # If it doesn't say "Claimed", it's the next reward in line!
                     if "Claimed" not in content:
-                        # "70 PTS to 100 Gems"
                         results["next_reward"] = " ".join(content.split())
-                        print(f"DEBUG: Found next reward: {results['next_reward']}")
                         break
             except Exception as e:
                 print(f"DEBUG: Scraper failed to find next reward: {e}")
                 results["next_reward"] = None
 
             # --- TAB 2: MISSIONS ---
-            await page.get_by_role("button", name="Missions").click()
-            await page.wait_for_timeout(1000)
+            missions_btn = page.get_by_role("button", name=re.compile(r"missions", re.IGNORECASE))
+            if await missions_btn.is_visible(timeout=3000):
+                await missions_btn.click(force=True)
+                await page.wait_for_timeout(1500)
 
-            # Scrape mission metrics
             mission_cards = page.locator('[class*="bonusMissionItem_item__"]')
             m_count = await mission_cards.count()
 
@@ -155,7 +177,7 @@ async def run_mission_worker(player_tag: str, cookies_json_str: str):
                         "progress": progress.strip(),
                         "reward": points.strip()
                     })
-                except:
+                except Exception:
                     continue
 
             results["success"] = True

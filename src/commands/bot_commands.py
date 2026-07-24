@@ -175,7 +175,7 @@ class LinkMenuView(discord.ui.View):
             inline=False
         )
         guide_embed.add_field(
-            name="3️Step 3: Export Your Cookies",
+            name="Step 3: Export Your Cookies",
             value="Click on browser extension to copy the cookies",
             inline=False
         )
