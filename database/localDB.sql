@@ -1,27 +1,31 @@
-DROP TABLE IF EXISTS servers;
+-- Drop tables in order of dependencies
+DROP TABLE IF EXISTS coc_sessions;
 DROP TABLE IF EXISTS players;
+DROP TABLE IF EXISTS servers;
 
+-- Create the players table
+CREATE TABLE IF NOT EXISTS players (
+    discord_id VARCHAR(255) PRIMARY KEY,
+    discord_username VARCHAR(255) NOT NULL,
+    player_tag VARCHAR(50) NOT NULL,
+    is_premium TINYINT(1) DEFAULT 0,
+    autoclaim_enabled TINYINT(1) DEFAULT 0
+);
 
+-- Create the coc_sessions table
+CREATE TABLE IF NOT EXISTS coc_sessions (
+    discord_id VARCHAR(255) PRIMARY KEY,
+    cookies_json TEXT,
+    FOREIGN KEY (discord_id) REFERENCES players(discord_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS servers (
-    guild_id VARCHAR(20) PRIMARY KEY,
+    guild_id BIGINT PRIMARY KEY,
     guild_name VARCHAR(255) NOT NULL,
     clan_tag VARCHAR(15),
-    war_channel_id VARCHAR(20),
-    raid_channel_id VARCHAR(20),
-    last_war_reminder VARCHAR(20) DEFAULT NULL,
-    last_raid_reminder VARCHAR(20) DEFAULT NULL
-);
-DROP TABLE IF EXISTS players;
-
-CREATE TABLE IF NOT EXISTS players (
-    discord_id VARCHAR(20) PRIMARY KEY, -- One Discord user = One CoC main account
-    discord_username VARCHAR(255) NOT NULL,
-    player_tag VARCHAR(15) NOT NULL,
-    is_premium BOOLEAN NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS coc_sessions (
-    player_tag VARCHAR(15) PRIMARY KEY, -- Supports unlimited alts!
-    discord_id VARCHAR(20) NOT NULL,     -- Links back to the owner
-    cookies_json TEXT NOT NULL,         -- The clean JSON array of browser cookies
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    war_channel_id BIGINT DEFAULT NULL,
+    raid_channel_id BIGINT DEFAULT NULL,
+    last_war_reminder DATETIME DEFAULT NULL,
+    last_raid_reminder DATETIME DEFAULT NULL,
+    war_reminder_1 TINYINT(1) DEFAULT 0,
+    war_reminder_2 TINYINT(1) DEFAULT 0,
 );

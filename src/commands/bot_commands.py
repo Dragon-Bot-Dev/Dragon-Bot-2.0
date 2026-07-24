@@ -153,13 +153,12 @@ class LinkMenuView(discord.ui.View):
     async def link_store(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_dm = interaction.guild is None
 
-        # 1. Create a beautiful, step-by-step registration instructions embed
         guide_embed = discord.Embed(
             title="Supercell Store Cookie Link Guide",
             description=(
                 "Follow these simple steps on your computer to securely register your web store session. "
                 "This allows the bot to automatically claim your weekly rewards!\n\n"
-                "**⏳ I am waiting for your file (expires in 5 minutes)...**"
+                "**⏳ I am waiting for your cookie text or .json file (expires in 2 minutes)...**"
             ),
             color=discord.Color.green()
         )
@@ -176,26 +175,24 @@ class LinkMenuView(discord.ui.View):
         )
         guide_embed.add_field(
             name="Step 3: Export Your Cookies",
-            value="Click on browser extension to copy the cookies",
+            value="Click on browser extension to copy the cookies to your clipboard.",
             inline=False
         )
         guide_embed.add_field(
-            name="Step 4: Upload it Here",
-            value="Paste and send in Dragon Bot DM.",
+            name="Step 4: Upload or Paste Here",
+            value="Paste the JSON text or upload the `.json` file directly in this DM.",
             inline=False
         )
 
         if is_dm:
-            # If already in DMs, send the guide directly
-            await interaction.response.send_message(embed=guide_embed, ephemeral=True)
-            asyncio.create_task(self.cog.handle_cookie_upload(interaction, interaction.user.id))
+            # Removed ephemeral=True because DMs do not support ephemeral responses
+            await interaction.response.send_message(embed=guide_embed)
+            asyncio.create_task(self.cog.handle_cookie_upload(interaction, interaction.user.id, interaction.channel))
         else:
             try:
-                # Attempt to DM the user the guide
                 dm_channel = await interaction.user.create_dm()
                 await dm_channel.send(embed=guide_embed)
                 
-                # Send an ephemeral confirmation embed inside the server channel
                 status_embed = discord.Embed(
                     title="🔒 Security Check Sent!",
                     description=(
@@ -210,7 +207,6 @@ class LinkMenuView(discord.ui.View):
                 asyncio.create_task(self.cog.handle_cookie_upload(interaction, interaction.user.id, dm_channel))
                 
             except discord.Forbidden:
-                # If the user has DMs closed, show an instructional error embed
                 fail_embed = discord.Embed(
                     title="❌ DM Delivery Failed",
                     description=(
@@ -321,7 +317,7 @@ class BotCommands(commands.Cog):
         summary_embed.add_field(
             name="⚙️ Settings",
             value=(
-                "> `[C]` `/setclantag` · `/disable_reminders` · `/botstatus` \n"
+                "> `[C]` `/setclantag` · `/disable_reminders` · `/serverstatus` \n"
                 "> `[G]` `/link` · `/unlink` (Connect CoC or Store account)"
             ),
             inline=False
@@ -374,7 +370,7 @@ class BotCommands(commands.Cog):
             value=(
                 "> [C] `/setclantag` — Link clan and set reminder channels\n"
                 "> [C] `/disable_reminders` — Mute War or Raid pings (Admins)\n"
-                "> [C] `/botstatus` — View current server config\n"
+                "> [C] `/serverstatus` — View current server config\n"
                 "> [G] `/link` / `/unlink` — Connect/disconnect CoC tag to Discord"
             ),
             inline=False
@@ -497,7 +493,7 @@ class BotCommands(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="botstatus", description="Get the server configuration and status")
+    @app_commands.command(name="serverstatus", description="Get the server configuration and status")
     async def server_status(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
@@ -571,7 +567,7 @@ class BotCommands(commands.Cog):
             cursor.close()
             conn.close() # Always close the connection too!
         except Exception as e:
-            print(f"Error in botstatus: {e}")
+            print(f"Error in serverstatus: {e}")
             import traceback
             traceback.print_exc()
             await interaction.followup.send(f"❌ Error fetching status: `{e}`")
@@ -683,50 +679,56 @@ class BotCommands(commands.Cog):
 
     # --- SECURE BACKGROUND COOKIE PROCESSOR ---
     async def handle_cookie_upload(self, interaction, user_id, target_channel=None):
-        """Background loop waiting for the user to upload their cookie file privately in DMs."""
+        """Background listener waiting for the user to paste cookies or upload a file in DMs."""
         def check(m):
-            return m.author.id == user_id and m.guild is None and len(m.attachments) > 0
+            # Matches any DM message sent by the target user
+            return m.author.id == user_id and m.guild is None
 
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=120.0)
-            attachment = msg.attachments[0]
             
-            file_bytes = await attachment.read()
-            file_str = file_bytes.decode("utf-8")
-            
-            # Validate JSON list format
+            # Extract content from attachment OR text message
+            if len(msg.attachments) > 0:
+                attachment = msg.attachments[0]
+                file_bytes = await attachment.read()
+                file_str = file_bytes.decode("utf-8")
+            else:
+                file_str = msg.content.strip()
+
+            # Clean markdown code blocks if user sends ```json ... ```
+            if file_str.startswith("```"):
+                lines = file_str.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                file_str = "\n".join(lines).strip()
+
+            # Validate JSON format
             parsed_cookies = json.loads(file_str)
             if not isinstance(parsed_cookies, list):
-                raise ValueError("Cookie file must contain a JSON list of cookies.")
+                raise ValueError("Cookie format must be a JSON array/list.")
 
-            self._save_user_session(str(user_id), file_str)
+            # Save session to DB
+            self._save_user_session(str(user_id), json.dumps(parsed_cookies))
 
             success_text = "🎉 **Success!** Your Supercell Store session cookies are verified and linked securely. You can now type `/claim` in any server channel!"
-            if target_channel:
-                await target_channel.send(success_text)
-            else:
-                await msg.channel.send(success_text)
+            await msg.channel.send(success_text)
 
         except asyncio.TimeoutError:
-            timeout_text = "⏰ **Timed Out:** You didn't upload your cookie file within 2 minutes. Click 'Link Store' in the server menu to try again!"
+            timeout_text = "⏰ **Timed Out:** You didn't send your cookies within 2 minutes. Click 'Link Store' in the server menu to try again!"
             if target_channel:
                 await target_channel.send(timeout_text)
-            else:
-                await interaction.followup.send(timeout_text, ephemeral=True)
-        except (json.JSONDecodeError, ValueError):
-            err_text = "❌ **Registration Failed:** The uploaded file was not a valid exported JSON cookie list. Make sure your extension outputs in **JSON format** and try again!"
+        except (json.JSONDecodeError, ValueError) as err:
+            err_text = f"❌ **Registration Failed:** Invalid cookie JSON format. Make sure you paste the full JSON array or upload the `.json` file!\n\n`Error: {err}`"
             if target_channel:
                 await target_channel.send(err_text)
-            else:
-                await interaction.followup.send(err_text, ephemeral=True)
         except Exception as e:
             print(f"💥 System/DB Error loading session: {e}")
             err_text = f"❌ **System Error:** Failed to link your store profile: `{e}`"
             if target_channel:
                 await target_channel.send(err_text)
-            else:
-                await interaction.followup.send(err_text, ephemeral=True)
-
+                
     # --- UNIFIED GLOBAL UNLINK COMMAND ---
     @app_commands.command(name='unlink', description="Unlink your Clash of Clans account globally from the bot.")
     async def unlink(self, interaction: discord.Interaction):
@@ -810,8 +812,14 @@ class BotCommands(commands.Cog):
                 )
 
             if data.get("missions"):
+                all_completed = True
+                
                 for mission in data["missions"]:
+                    # Checks if the scraper flagged it as completed
                     is_completed = "COMPLETED" in mission["progress"].upper()
+                    if not is_completed:
+                        all_completed = False
+                        
                     status_emoji = "✅" if is_completed else "⏳"
                     
                     embed.add_field(
@@ -819,12 +827,24 @@ class BotCommands(commands.Cog):
                         value=f"Progress: `{mission['progress']}` | Reward: `{mission['reward']}`",
                         inline=False
                     )
+                
+                # Dynamic congrats message
+                if all_completed:
+                    embed.description = f"Successfully claimed **{claimed_rewards}** reward(s)!\n\n🎉 **You have completed all active missions!**"
             else:
                 embed.add_field(
-                    name="ℹ️ No Missions Found",
-                    value="Could not parse any active missions right now.",
+                    name="✅ All Missions Completed!",
+                    value="No active missions found. You've likely finished them all for this week!",
                     inline=False
                 )
+
+            # --- Inject the Live Store Timer ---
+            if data.get("season_timer"):
+                embed.set_footer(text=f"⏳ Store Missions Reset In: {data['season_timer']}")
+            else:
+                embed.set_footer(text="Missions on the store reset every Monday.")
+                
+            await interaction.followup.send(embed=embed)
 
             embed.set_footer(text="Missions on the store reset every Monday.")
             await interaction.followup.send(embed=embed)
@@ -837,101 +857,162 @@ class BotCommands(commands.Cog):
             except Exception:
                 pass
 
-    @app_commands.command(name="autoclaim", description="Toggle automatic reward claiming on Sundays.")
-    @app_commands.describe(status="Turn autoclaim ON or OFF")
-    @app_commands.choices(status=[
-        app_commands.Choice(name="On", value=1),
-        app_commands.Choice(name="Off", value=0)
-    ])
-    async def autoclaim_toggle(self, interaction: discord.Interaction, status: app_commands.Choice[int]):
-        await interaction.response.defer(ephemeral=True)
+    # @app_commands.command(name="autoclaim", description="Toggle automatic reward claiming on Sundays.")
+    # @app_commands.describe(status="Turn autoclaim ON or OFF")
+    # @app_commands.choices(status=[
+    #     app_commands.Choice(name="On", value=1),
+    #     app_commands.Choice(name="Off", value=0)
+    # ])
+    # async def autoclaim_toggle(self, interaction: discord.Interaction, status: app_commands.Choice[int]):
+    #     await interaction.response.defer(ephemeral=True)
         
-        user_id = str(interaction.user.id)
-        requested_val = status.value  # 1 for On, 0 for Off
+    #     user_id = str(interaction.user.id)
+    #     requested_val = status.value  # 1 for On, 0 for Off
         
-        conn = None
-        cursor = None
+    #     conn = None
+    #     cursor = None
         
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor(buffered=True)
+    #     try:
+    #         conn = get_db_connection()
+    #         cursor = conn.cursor(buffered=True)
             
-            # Fetch Current Toggle State
-            cursor.execute("SELECT autoclaim_enabled FROM players WHERE discord_id = %s", (user_id,))
-            result = cursor.fetchone()
+    #         # Fetch Current Toggle State
+    #         cursor.execute("SELECT autoclaim_enabled FROM players WHERE discord_id = %s", (user_id,))
+    #         result = cursor.fetchone()
             
-            # Check if user actually exists in the database
-            if not result:
-                await interaction.followup.send(
-                    "❌ You must link your account using `/link` before you can toggle autoclaim.", ephemeral=True
-                )
-                return
+    #         # Check if user actually exists in the database
+    #         if not result:
+    #             await interaction.followup.send(
+    #                 "❌ You must link your account using `/link` before you can toggle autoclaim.", ephemeral=True
+    #             )
+    #             return
 
-            current_val = result[0] # Current DB value (0 or 1)
+    #         current_val = result[0] # Current DB value (0 or 1)
 
-            # Check for Redundancy
-            if requested_val == current_val:
-                state_text = "enabled ✅" if current_val == 1 else "disabled ❌"
-                await interaction.followup.send(f"Your autoclaim is already {state_text}.")
-                return
+    #         # Check for Redundancy
+    #         if requested_val == current_val:
+    #             state_text = "enabled ✅" if current_val == 1 else "disabled ❌"
+    #             await interaction.followup.send(f"Your autoclaim is already {state_text}.")
+    #             return
 
-            # Update the Toggle
-            cursor.execute(
-                "UPDATE players SET autoclaim_enabled = %s WHERE discord_id = %s",
-                (requested_val, user_id)
-            )
-            conn.commit()
+    #         # Update the Toggle
+    #         cursor.execute(
+    #             "UPDATE players SET autoclaim_enabled = %s WHERE discord_id = %s",
+    #             (requested_val, user_id)
+    #         )
+    #         conn.commit()
             
-            if requested_val == 1:
-                await interaction.followup.send(
-                    "Autoclaim ENABLED ✅\nYour missions will now be checked automatically every Sunday at 10 AM."
-                )
-            else:
-                await interaction.followup.send(
-                    "Autoclaim DISABLED ❌\nAutomatic Sunday checks have been turned off for your account."
-                )
+    #         if requested_val == 1:
+    #             await interaction.followup.send(
+    #                 "Autoclaim ENABLED ✅\nYour missions will now be checked automatically every Sunday at 10 AM."
+    #             )
+    #         else:
+    #             await interaction.followup.send(
+    #                 "Autoclaim DISABLED ❌\nAutomatic Sunday checks have been turned off for your account."
+    #             )
                 
-        except Exception as e:
-            print(f"Error in autoclaim_toggle: {e}")
-            await interaction.followup.send(f"❌ Error updating settings: `{e}`")
-        finally:
-            # ✅ GUARANTEED CLEANUP: This runs even if we hit a 'return' statement above!
-            if cursor: cursor.close()
-            if conn: conn.close()
+    #     except Exception as e:
+    #         print(f"Error in autoclaim_toggle: {e}")
+    #         await interaction.followup.send(f"❌ Error updating settings: `{e}`")
+    #     finally:
+    #         # ✅ GUARANTEED CLEANUP: This runs even if we hit a 'return' statement above!
+    #         if cursor: cursor.close()
+    #         if conn: conn.close()
     
-    @app_commands.command(name="disable_reminders", description="Turn off specific background reminders")
-    @app_commands.describe(type="Choose which reminder to disable")
-    @app_commands.choices(type=[
-        app_commands.Choice(name="⚔️ War Reminders", value="war"),
-        app_commands.Choice(name="🏰 Raid Reminders", value="raid"),
-        app_commands.Choice(name="🚫 Both", value="both")
+    @app_commands.command(name="adjust_reminders", description="Set or disable background reminders and custom times")
+    @app_commands.describe(
+        war_channel="Set a new channel for war reminders",
+        raid_channel="Set a new channel for capital raid reminders",
+        disable="Select a reminder type to disable completely",
+        reminder_hours_1="Primary war reminder time (e.g. 6 for 6h left)",
+        reminder_hours_2="Secondary war reminder time (e.g. 2 for 2h left. Set 0 to disable)"
+    )
+    @app_commands.choices(disable=[
+        app_commands.Choice(name="⚔️ Disable War Reminders", value="war"),
+        app_commands.Choice(name="🏰 Disable Raid Reminders", value="raid"),
+        app_commands.Choice(name="🚫 Disable Both", value="both")
     ])
     @app_commands.checks.has_permissions(administrator=True)
-    async def disable_reminders(self, interaction: discord.Interaction, type: str):
+    async def adjust_reminders(
+        self, 
+        interaction: discord.Interaction, 
+        war_channel: discord.TextChannel = None,
+        raid_channel: discord.TextChannel = None,
+        disable: app_commands.Choice[str] = None,
+        reminder_hours_1: int = None,
+        reminder_hours_2: int = None
+    ):
         await interaction.response.defer(ephemeral=True)
         
-        cursor = get_db_cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor(buffered=True)
         guild_id = str(interaction.guild.id)
         
-        if type == "war":
-            sql = "UPDATE servers SET war_channel_id = NULL WHERE guild_id = %s"
-            label = "⚔️ War Reminders"
-        elif type == "raid":
-            sql = "UPDATE servers SET raid_channel_id = NULL WHERE guild_id = %s"
-            label = "🏰 Raid Reminders"
-        else:
-            sql = "UPDATE servers SET war_channel_id = NULL, raid_channel_id = NULL WHERE guild_id = %s"
-            label = "⚔️ War and 🏰 Raid Reminders"
-
-        try:
-            cursor.execute(sql, (guild_id,))
-            get_db_connection().commit() # If your cursor helper doesn't auto-commit
+        # 1. Check if the server is linked first
+        cursor.execute("SELECT clan_tag FROM servers WHERE guild_id = %s", (guild_id,))
+        if not cursor.fetchone():
             cursor.close()
+            conn.close()
+            return await interaction.followup.send("❌ Please link a clan using `/setclantag` before adjusting reminders.")
+
+        updates = []
+        params = []
+        msg_parts = []
+        
+        # 2. Handle Disable Arguments
+        if disable:
+            if disable.value in ("war", "both"):
+                updates.append("war_channel_id = NULL")
+                msg_parts.append("⚔️ War reminders disabled.")
+            if disable.value in ("raid", "both"):
+                updates.append("raid_channel_id = NULL")
+                msg_parts.append("🏰 Raid reminders disabled.")
+                
+        # 3. Handle Channel Updates (Overrides if you try to set AND disable at the same time)
+        if war_channel and not (disable and disable.value in ("war", "both")):
+            updates.append("war_channel_id = %s")
+            params.append(str(war_channel.id))
+            msg_parts.append(f"⚔️ War reminders set to {war_channel.mention}.")
             
-            await interaction.followup.send(f"✅ {label} have been disabled for this server.")
+        if raid_channel and not (disable and disable.value in ("raid", "both")):
+            updates.append("raid_channel_id = %s")
+            params.append(str(raid_channel.id))
+            msg_parts.append(f"🏰 Raid reminders set to {raid_channel.mention}.")
+            
+        # 4. Handle Custom Timers
+        if reminder_hours_1 is not None:
+            updates.append("war_reminder_1 = %s")
+            params.append(reminder_hours_1)
+            msg_parts.append(f"⏱️ Timer 1 set to **{reminder_hours_1} hours** remaining.")
+            
+        if reminder_hours_2 is not None:
+            updates.append("war_reminder_2 = %s")
+            params.append(reminder_hours_2)
+            if reminder_hours_2 > 0:
+                msg_parts.append(f"⏱️ Timer 2 set to **{reminder_hours_2} hours** remaining.")
+            else:
+                msg_parts.append("⏱️ Timer 2 **disabled**.")
+
+        # 5. Stop if no options were selected
+        if not updates:
+            cursor.close()
+            conn.close()
+            return await interaction.followup.send("⚠️ You didn't provide any changes to make! Please select a channel to set, an option to disable, or a timer to update.")
+
+        # 6. Execute Dynamic SQL
+        try:
+            sql = f"UPDATE servers SET {', '.join(updates)} WHERE guild_id = %s"
+            params.append(guild_id)
+            
+            cursor.execute(sql, tuple(params))
+            conn.commit()
+            
+            await interaction.followup.send("✅ **Reminders Updated Successfully:**\n- " + "\n- ".join(msg_parts))
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update settings: {e}")
-
+        finally:
+            cursor.close()
+            conn.close()
     
 async def setup(bot):
     await bot.add_cog(BotCommands(bot))
