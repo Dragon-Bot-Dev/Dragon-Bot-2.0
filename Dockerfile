@@ -1,23 +1,18 @@
-# 1. Start with your required Python version
-FROM python:3.11-slim
+# 1. Official Microsoft image with Python 3.11 + Playwright/Chromium pre-installed
+FROM mcr.microsoft.com/playwright/python:v1.45.0-jammy
 
-# 2. Set the working directory inside the container
+# 2. Set working directory
 WORKDIR /app
 
-# 3. Copy only requirements first (leverages Docker cache)
+# 3. Copy & install requirements
 COPY requirements.txt .
-
-# 4. Install your Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Tell Playwright to download Chromium AND its OS-level system dependencies
-RUN playwright install --with-deps chromium
-
-# 6. Copy the rest of your bot's files
+# 4. Copy the rest of your code
 COPY . .
 
-# 7. Set your PYTHONPATH
+# 5. Set PYTHONPATH
 ENV PYTHONPATH="/app:/app/src"
 
-# 8. Fire up the engine
+# 6. Start the bot
 CMD ["python", "src/main.py"]

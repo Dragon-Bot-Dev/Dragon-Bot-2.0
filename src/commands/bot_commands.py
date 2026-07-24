@@ -754,147 +754,150 @@ class BotCommands(commands.Cog):
             print(f"DB Error in Unlink: {e}")
             await interaction.followup.send("❌ An error occurred while unlinking.")
 
-    # @app_commands.command(
-    #     name="claim", 
-    #     description="Manually claims rewards and checks mission progress for your registered account."
-    # )
-    # async def claim(self, interaction: discord.Interaction):
-    #     print(f"\n📥 [Discord] /claim command triggered by {interaction.user.name}!")
-    #     await interaction.response.defer(thinking=True)
+    @app_commands.command(
+        name="claim", 
+        description="Manually claims rewards and checks mission progress for your registered account."
+    )
+    async def claim(self, interaction: discord.Interaction):
+        print(f"\n📥 [Discord] /claim command triggered by {interaction.user.name}!")
+        await interaction.response.defer(thinking=True)
 
-    #     try:
-    #         cookies_json_str = self._get_user_session(str(interaction.user.id))
+        try:
+            cookies_json_str = self._get_user_session(str(interaction.user.id))
             
-    #         if not cookies_json_str:
-    #             print(f"❌ [Discord] {interaction.user.name} is not registered.")
-    #             embed = discord.Embed(
-    #                 title="⚠️ Registration Required",
-    #                 description=(
-    #                     "You haven't linked a Supercell Store session to your Discord account yet!\n\n"
-    #                     "**How to register:**\n"
-    #                     "1. Run `/link` and click **Link Store (Cookies)**.\n"
-    #                     "2. Drop your exported cookie file into your secure DM channel!"
-    #                 ),
-    #                 color=discord.Color.orange()
-    #             )
-    #             await interaction.followup.send(embed=embed)
-    #             return
+            if not cookies_json_str:
+                print(f"❌ [Discord] {interaction.user.name} is not registered.")
+                embed = discord.Embed(
+                    title="⚠️ Registration Required",
+                    description=(
+                        "You haven't linked a Supercell Store session to your Discord account yet!\n\n"
+                        "**How to register:**\n"
+                        "1. Run `/link` and click **Link Store (Cookies)**.\n"
+                        "2. Drop your exported cookie file into your secure DM channel!"
+                    ),
+                    color=discord.Color.orange()
+                )
+                await interaction.followup.send(embed=embed)
+                return
 
-    #         print(f"🚀 [Discord] Running Playwright worker for {interaction.user.name}...")
-    #         data = await run_mission_worker(str(interaction.user.id), cookies_json_str)
-    #         print("🛰️ [Discord] Playwright worker finished execution.")
+            print(f"🚀 [Discord] Running Playwright worker for {interaction.user.name}...")
+            data = await run_mission_worker(str(interaction.user.id), cookies_json_str)
+            print("🛰️ [Discord] Playwright worker finished execution.")
 
-    #         if not data.get("success", False):
-    #             error_msg = data.get("error", "Unknown Error")
-    #             print(f"❌ [Discord] Worker failed: {error_msg}")
-    #             embed = discord.Embed(
-    #                 title="⚠️ Claim Failed",
-    #                 description=f"Reason: `{error_msg}`\n\nIf your session expired, run `/link` and update your store cookies again.",
-    #                 color=discord.Color.red()
-    #             )
-    #             await interaction.followup.send(embed=embed)
-    #             return
+            if not data.get("success", False):
+                error_msg = data.get("error", "Unknown Error")
+                print(f"❌ [Discord] Worker failed: {error_msg}")
+                embed = discord.Embed(
+                    title="⚠️ Claim Failed",
+                    description=f"Reason: `{error_msg}`\n\nIf your session expired, run `/link` and update your store cookies again.",
+                    color=discord.Color.red()
+                )
+                await interaction.followup.send(embed=embed)
+                return
 
-    #         claimed_rewards = data["claimed"]
-    #         embed = discord.Embed(
-    #             title="Store Claim Status",
-    #             description=f"Successfully claimed **{claimed_rewards}** reward(s)!",
-    #             color=discord.Color.green() if claimed_rewards > 0 else discord.Color.gold()
-    #         )
+            claimed_rewards = data["claimed"]
+            embed = discord.Embed(
+                title="Store Claim Status",
+                description=f"Successfully claimed **{claimed_rewards}** reward(s)!",
+                color=discord.Color.green() if claimed_rewards > 0 else discord.Color.gold()
+            )
 
-    #         if data.get("next_reward"):
-    #             embed.add_field(
-    #                 name="Next Item Progress", 
-    #                 value=f"{data['next_reward']}", 
-    #                 inline=False
-    #             )
+            if data.get("next_reward"):
+                embed.add_field(
+                    name="Next Item Progress", 
+                    value=f"{data['next_reward']}", 
+                    inline=False
+                )
 
-    #         if data.get("missions"):
-    #             for mission in data["missions"]:
-    #                 is_completed = "COMPLETED" in mission["progress"].upper()
-    #                 status_emoji = "✅" if is_completed else "⏳"
+            if data.get("missions"):
+                for mission in data["missions"]:
+                    is_completed = "COMPLETED" in mission["progress"].upper()
+                    status_emoji = "✅" if is_completed else "⏳"
                     
-    #                 embed.add_field(
-    #                     name=f"{status_emoji} {mission['title']}",
-    #                     value=f"Progress: `{mission['progress']}` | Reward: `{mission['reward']}`",
-    #                     inline=False
-    #                 )
-    #         else:
-    #             embed.add_field(
-    #                 name="ℹ️ No Missions Found",
-    #                 value="Could not parse any active missions right now.",
-    #                 inline=False
-    #             )
+                    embed.add_field(
+                        name=f"{status_emoji} {mission['title']}",
+                        value=f"Progress: `{mission['progress']}` | Reward: `{mission['reward']}`",
+                        inline=False
+                    )
+            else:
+                embed.add_field(
+                    name="ℹ️ No Missions Found",
+                    value="Could not parse any active missions right now.",
+                    inline=False
+                )
 
-    #         embed.set_footer(text="Missions on the store reset every Monday.")
-    #         await interaction.followup.send(embed=embed)
-    #         print("✅ [Discord] Embed successfully sent to user.")
+            embed.set_footer(text="Missions on the store reset every Monday.")
+            await interaction.followup.send(embed=embed)
+            print("✅ [Discord] Embed successfully sent to user.")
 
-    #     except Exception as e:
-    #         print(f"💥 [Discord] CRITICAL ERROR in slash command execution: {e}")
-    #         try:
-    #             await interaction.followup.send(f"⚠️ A critical error occurred inside the bot: `{e}`")
-    #         except Exception:
-    #             pass
+        except Exception as e:
+            print(f"💥 [Discord] CRITICAL ERROR in slash command execution: {e}")
+            try:
+                await interaction.followup.send(f"⚠️ A critical error occurred inside the bot: `{e}`")
+            except Exception:
+                pass
 
-    # @app_commands.command(name="autoclaim", description="[PREMIUM] Toggle automatic reward claiming on Sundays.")
-    # @app_commands.describe(status="Turn autoclaim ON or OFF")
-    # @app_commands.choices(status=[
-    #     app_commands.Choice(name="On", value=1),
-    #     app_commands.Choice(name="Off", value=0)
-    # ])
-    # async def autoclaim_toggle(self, interaction: discord.Interaction, status: app_commands.Choice[int]):
-    #     await interaction.response.defer(ephemeral=True)
+    @app_commands.command(name="autoclaim", description="Toggle automatic reward claiming on Sundays.")
+    @app_commands.describe(status="Turn autoclaim ON or OFF")
+    @app_commands.choices(status=[
+        app_commands.Choice(name="On", value=1),
+        app_commands.Choice(name="Off", value=0)
+    ])
+    async def autoclaim_toggle(self, interaction: discord.Interaction, status: app_commands.Choice[int]):
+        await interaction.response.defer(ephemeral=True)
         
-    #     user_id = str(interaction.user.id)
-    #     requested_val = status.value  # 1 for On, 0 for Off
+        user_id = str(interaction.user.id)
+        requested_val = status.value  # 1 for On, 0 for Off
         
-    #     try:
-    #         conn = get_db_connection()
-    #         cursor = conn.cursor(buffered=True)
+        conn = None
+        cursor = None
+        
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(buffered=True)
             
-    #         # 1. Fetch both Premium Status AND Current Toggle State
-    #         cursor.execute("SELECT is_premium, autoclaim_enabled FROM players WHERE discord_id = %s", (user_id,))
-    #         result = cursor.fetchone()
+            # Fetch Current Toggle State
+            cursor.execute("SELECT autoclaim_enabled FROM players WHERE discord_id = %s", (user_id,))
+            result = cursor.fetchone()
             
-    #         # Check if user exists and is premium
-    #         if not result or not result[0]:
-    #             await interaction.followup.send(
-    #                 "⭐ **Premium Feature:** Automatic claiming is only available for premium supporters. "
-    #                 "Check out the website to upgrade!", ephemeral=True
-    #             )
-    #             return
+            # Check if user actually exists in the database
+            if not result:
+                await interaction.followup.send(
+                    "❌ You must link your account using `/link` before you can toggle autoclaim.", ephemeral=True
+                )
+                return
 
-    #         current_val = result[1] # Current DB value (0 or 1)
+            current_val = result[0] # Current DB value (0 or 1)
 
-    #         # 2. Check for Redundancy (Already enabled or already disabled)
-    #         if requested_val == current_val:
-    #             state_text = "enabled ✅" if current_val == 1 else "disabled ❌"
-    #             await interaction.followup.send(f"Your autoclaim is already {state_text}.")
-    #             return
+            # Check for Redundancy
+            if requested_val == current_val:
+                state_text = "enabled ✅" if current_val == 1 else "disabled ❌"
+                await interaction.followup.send(f"Your autoclaim is already {state_text}.")
+                return
 
-    #         # 3. Update the Toggle if it's a new state
-    #         cursor.execute(
-    #             "UPDATE players SET autoclaim_enabled = %s WHERE discord_id = %s",
-    #             (requested_val, user_id)
-    #         )
-    #         conn.commit()
+            # Update the Toggle
+            cursor.execute(
+                "UPDATE players SET autoclaim_enabled = %s WHERE discord_id = %s",
+                (requested_val, user_id)
+            )
+            conn.commit()
             
-    #         if requested_val == 1:
-    #             await interaction.followup.send(
-    #                 "Autoclaim ENABLED ✅\nYour missions will now be checked automatically every Sunday at 10 AM."
-    #             )
-    #         else:
-    #             await interaction.followup.send(
-    #                 "Autoclaim DISABLED ❌\nAutomatic Sunday checks have been turned off for your account."
-    #             )
-            
-    #         cursor.close()
-    #         conn.close()
-            
-    #     except Exception as e:
-    #         print(f"Error in autoclaim_toggle: {e}")
-    #         await interaction.followup.send(f"❌ Error updating settings: `{e}`")
+            if requested_val == 1:
+                await interaction.followup.send(
+                    "Autoclaim ENABLED ✅\nYour missions will now be checked automatically every Sunday at 10 AM."
+                )
+            else:
+                await interaction.followup.send(
+                    "Autoclaim DISABLED ❌\nAutomatic Sunday checks have been turned off for your account."
+                )
+                
+        except Exception as e:
+            print(f"Error in autoclaim_toggle: {e}")
+            await interaction.followup.send(f"❌ Error updating settings: `{e}`")
+        finally:
+            # ✅ GUARANTEED CLEANUP: This runs even if we hit a 'return' statement above!
+            if cursor: cursor.close()
+            if conn: conn.close()
     
     @app_commands.command(name="disable_reminders", description="Turn off specific background reminders")
     @app_commands.describe(type="Choose which reminder to disable")
