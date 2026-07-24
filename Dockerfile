@@ -1,5 +1,5 @@
 # 1. Official Microsoft image with Python 3.11 + Playwright/Chromium pre-installed
-FROM mcr.microsoft.com/playwright/python:v1.45.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy
 
 # 2. Set working directory
 WORKDIR /app
