@@ -165,7 +165,7 @@ class LinkMenuView(discord.ui.View):
         
         guide_embed.add_field(
             name="Step 1: Install a Cookie Exporter",
-            value="Install a [Copy Cookies](https://chromewebstore.google.com/detail/copy-cookies/jcbpglbplpblnagieibnemmkiamekcdg) browser extension",
+            value="Install a [Copy Cookies](https://cookie-editor.com/) browser extension",
             inline=False
         )
         guide_embed.add_field(
@@ -317,7 +317,7 @@ class BotCommands(commands.Cog):
         summary_embed.add_field(
             name="⚙️ Settings",
             value=(
-                "> `[C]` `/setclantag` · `/disable_reminders` · `/serverstatus` \n"
+                "> `[C]` `/setclantag` · `/adjust_reminders` · `/serverstatus` \n"
                 "> `[G]` `/link` · `/unlink` (Connect CoC or Store account)"
             ),
             inline=False
@@ -369,7 +369,7 @@ class BotCommands(commands.Cog):
             name="⚙️ Settings & Admin",
             value=(
                 "> [C] `/setclantag` — Link clan and set reminder channels\n"
-                "> [C] `/disable_reminders` — Mute War or Raid pings (Admins)\n"
+                "> [C] `/adjust_reminders` — Mute War or Raid pings (Admins)\n"
                 "> [C] `/serverstatus` — View current server config\n"
                 "> [G] `/link` / `/unlink` — Connect/disconnect CoC tag to Discord"
             ),
