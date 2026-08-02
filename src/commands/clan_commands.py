@@ -374,7 +374,7 @@ class RaidPatrol(commands.Cog):
                     # 3. RESET LOGIC: Clear reminder status if raid weekend is over
                     if raid.state != "ongoing":
                         if last_sent is not None:
-                            cursor.execute("UPDATE servers SET last_raid_reminder = NULL WHERE clan_tag = %s", (tag,))
+                            cursor.execute("UPDATE servers SET last_raid_reminder = NULL WHERE guild_id = %s", (guild_id,))
                             get_db_connection().commit()
                         continue
                     
@@ -428,7 +428,7 @@ class RaidPatrol(commands.Cog):
                         print(f"✅ SUCCESS: Sent 24h raid reminder for {tag}")
 
                         # Update DB to prevent duplicate pings for this raid session
-                        cursor.execute("UPDATE servers SET last_raid_reminder = %s WHERE clan_tag = %s", (reminder_type, tag))
+                        cursor.execute("UPDATE servers SET last_raid_reminder = %s WHERE guild_id = %s", (reminder_type, guild_id))
                         get_db_connection().commit()
 
                 except Exception as clan_error:

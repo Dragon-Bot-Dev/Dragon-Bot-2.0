@@ -558,7 +558,11 @@ class WarPatrol(commands.Cog):
             tracked_clans = cursor.fetchall()
 
             for clan_tag, guild_id, war_channel_id, last_sent, cfg_hours_1, cfg_hours_2 in tracked_clans:
-                if not clan_tag or not war_channel_id: continue 
+                if not clan_tag or not war_channel_id: continue
+
+                # Match /serverstatus's displayed defaults — unset timers are NULL in the DB
+                cfg_hours_1 = cfg_hours_1 if cfg_hours_1 is not None else 4
+                cfg_hours_2 = cfg_hours_2 if cfg_hours_2 is not None else 1
 
                 try:
                     # 2. FETCH DATA
@@ -576,13 +580,13 @@ class WarPatrol(commands.Cog):
                     if war_data and war_data.state == "warEnded":
                         if last_sent != "summary_sent":
                             await self.send_war_summary(guild_id, war_channel_id, war_data, clan_tag)
-                            cursor.execute("UPDATE servers SET last_war_reminder = 'summary_sent' WHERE clan_tag = %s", (clan_tag,))
+                            cursor.execute("UPDATE servers SET last_war_reminder = 'summary_sent' WHERE guild_id = %s", (guild_id,))
                             get_db_connection().commit()
                         continue
 
                     if not war_data or war_data.state == "preparation":
                         if last_sent is not None:
-                            cursor.execute("UPDATE servers SET last_war_reminder = NULL WHERE clan_tag = %s", (clan_tag,))
+                            cursor.execute("UPDATE servers SET last_war_reminder = NULL WHERE guild_id = %s", (guild_id,))
                             get_db_connection().commit()
                         continue
 
@@ -670,7 +674,7 @@ class WarPatrol(commands.Cog):
                         print(f"✅ SUCCESS: Sent custom {current_target}h alert for {clan_tag}")
 
                     # 7. UPDATE DATABASE PERSISTENCE LOCK
-                    cursor.execute("UPDATE servers SET last_war_reminder = %s WHERE clan_tag = %s", (reminder_type, clan_tag))
+                    cursor.execute("UPDATE servers SET last_war_reminder = %s WHERE guild_id = %s", (reminder_type, guild_id))
                     get_db_connection().commit()
 
                 except Exception as clan_error:
@@ -757,9 +761,6 @@ class WarPatrol(commands.Cog):
         await self.bot.wait_until_ready()
 
 async def setup(bot):
-  
-    import config 
-    
     # Pass config.coc_client to both
     await bot.add_cog(WarCommands(bot, config.coc_client))
     await bot.add_cog(WarPatrol(bot, config.coc_client))

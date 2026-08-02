@@ -11,10 +11,18 @@ class ClanNotSetError(ClanTagError):
     def __init__(self):
         super().__init__("No clan tag is set for this server. Use `/setclantag` first.")
 
-class PlayerTagError(Exception): pass
+class PlayerTagError(Exception):
+    """Base for our player‐tag lookup errors."""
+
 class PlayerNotLinkedError(PlayerTagError):
+    """Raised when a mentioned user has no tag in the DB."""
     def __init__(self, mention: str):
         super().__init__(f"{mention} has not linked a Clash of Clans account.")
+
+class MissingPlayerTagError(PlayerTagError):
+    """Raised when neither a user nor a player_tag was provided."""
+    def __init__(self):
+        super().__init__("Please provide a player tag or mention a linked user.")
 
 # --- Database Helpers ---
 def fetch_clan_from_db(guild_id: int, provided_tag: str = None) -> str:
@@ -343,20 +351,3 @@ async def get_war_log_data(clan_tag: str):
     except coc.ClashOfClansException as e:
         print(f"\n[!] CLASH API ERROR (War Log): {e}\n")
         return []
-
-
-
-class PlayerTagError(Exception):
-    """Base for our player‐tag lookup errors."""
-
-class PlayerNotLinkedError(PlayerTagError):
-    """Raised when a mentioned user has no tag in the DB."""
-    def __init__(self, mention: str):
-        super().__init__(f"{mention} has not linked a Clash of Clans account.")
-
-class MissingPlayerTagError(PlayerTagError):
-    """Raised when neither a user nor a player_tag was provided."""
-    def __init__(self):
-        super().__init__("Please provide a player tag or mention a linked user.")
-
-

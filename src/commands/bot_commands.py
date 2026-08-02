@@ -1,10 +1,8 @@
 from datetime import datetime
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands, Embed, ui, Interaction
+from discord.ext import commands
+from discord import app_commands, ui
 import random
-import time
-import coc
 import praw
 import os
 import json
@@ -25,11 +23,7 @@ reddit = praw.Reddit(
 
 # Import helpers from config and utils
 from config import get_db_connection, get_db_cursor, coc_client
-from utils import (
-    fetch_clan_from_db, fetch_player_from_DB, get_clan_data, 
-    check_coc_clan_tag, check_coc_player_tag, get_player_data,
-    ClanNotSetError, PlayerNotLinkedError, MissingPlayerTagError
-)
+from utils import check_coc_clan_tag, check_coc_player_tag
 
 
 class HelpView(ui.View):
@@ -175,7 +169,7 @@ class LinkMenuView(discord.ui.View):
         )
         guide_embed.add_field(
             name="Step 3: Export Your Cookies",
-            value="Click on browser extension to copy the cookies to your clipboard.",
+            value="Click on browser extension & export to copy the cookies to your clipboard.",
             inline=False
         )
         guide_embed.add_field(
@@ -224,65 +218,6 @@ class LinkMenuView(discord.ui.View):
 class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
-    # def cog_load(self):
-    #     # Start the loop when the Cog is loaded
-    #     if not self.sunday_worker.is_running():
-    #         self.sunday_worker.start()
-    #         print("✅ Sunday Autoclaim task started.")
-
-    # def cog_unload(self):
-    #     # Stop the loop if the Cog is unloaded (prevents duplicate loops)
-    #     self.sunday_worker.cancel()
-    #     print("🛑 Sunday Autoclaim task stopped.")
-
-    # @tasks.loop(hours=1)
-    # async def sunday_worker(self):
-    #     now = datetime.datetime.now()
-        
-    #     # weekday() == 6 is Sunday. hour == 10 is 10:00 AM
-    #     if now.weekday() == 6 and now.hour == 10:
-    #         print("🚀 [Background] Sunday Autoclaim loop triggered!")
-            
-    #         try:
-    #             conn = get_db_connection()
-    #             cursor = conn.cursor(buffered=True)
-                
-    #             # Fetch all premium users who have enabled the toggle
-    #             # We JOIN with coc_sessions to make sure they actually have cookies linked
-    #             cursor.execute("""
-    #                 SELECT p.discord_id, s.cookies_json 
-    #                 FROM players p
-    #                 JOIN coc_sessions s ON p.discord_id = s.discord_id
-    #                 WHERE p.is_premium = 1 AND p.autoclaim_enabled = 1
-    #             """)
-    #             targets = cursor.fetchall()
-                
-    #             for discord_id, cookies_str in targets:
-    #                 print(f"🤖 [Background] Autoclaiming for {discord_id}...")
-                    
-    #                 try:
-    #                     data = await run_mission_worker(discord_id, cookies_str)
-                        
-    #                     # 2. Notify the user via DM
-    #                     user = await self.bot.fetch_user(int(discord_id))
-    #                     if data.get("success"):
-    #                         claimed = data.get("claimed", 0)
-    #                         await user.send(f"✅ **Sunday Autoclaim:** I've checked the store and claimed **{claimed}** rewards for you!")
-    #                     else:
-    #                         # If it failed (expired cookies), let them know so they can fix it
-    #                         await user.send(f"⚠️ **Autoclaim Failed:** Your session might have expired. Please update your cookies using `/link`.\nError: `{data.get('error')}`")
-                        
-    #                     # Wait 15 seconds between users to stay under Railway RAM limits
-    #                     await asyncio.sleep(15)
-
-    #                 except Exception as worker_err:
-    #                     print(f"❌ Worker Error for {discord_id}: {worker_err}")
-                
-    #             cursor.close()
-    #             conn.close()
-    #         except Exception as e:
-    #             print(f"💥 [Background] Sunday loop critical error: {e}")
 
     @app_commands.command(name="help", description="Displays command guide")
     async def help_command(self, interaction: discord.Interaction):
@@ -845,9 +780,6 @@ class BotCommands(commands.Cog):
                 embed.set_footer(text="Missions on the store reset every Monday.")
                 
             await interaction.followup.send(embed=embed)
-
-            embed.set_footer(text="Missions on the store reset every Monday.")
-            await interaction.followup.send(embed=embed)
             print("✅ [Discord] Embed successfully sent to user.")
 
         except Exception as e:
@@ -857,68 +789,6 @@ class BotCommands(commands.Cog):
             except Exception:
                 pass
 
-    # @app_commands.command(name="autoclaim", description="Toggle automatic reward claiming on Sundays.")
-    # @app_commands.describe(status="Turn autoclaim ON or OFF")
-    # @app_commands.choices(status=[
-    #     app_commands.Choice(name="On", value=1),
-    #     app_commands.Choice(name="Off", value=0)
-    # ])
-    # async def autoclaim_toggle(self, interaction: discord.Interaction, status: app_commands.Choice[int]):
-    #     await interaction.response.defer(ephemeral=True)
-        
-    #     user_id = str(interaction.user.id)
-    #     requested_val = status.value  # 1 for On, 0 for Off
-        
-    #     conn = None
-    #     cursor = None
-        
-    #     try:
-    #         conn = get_db_connection()
-    #         cursor = conn.cursor(buffered=True)
-            
-    #         # Fetch Current Toggle State
-    #         cursor.execute("SELECT autoclaim_enabled FROM players WHERE discord_id = %s", (user_id,))
-    #         result = cursor.fetchone()
-            
-    #         # Check if user actually exists in the database
-    #         if not result:
-    #             await interaction.followup.send(
-    #                 "❌ You must link your account using `/link` before you can toggle autoclaim.", ephemeral=True
-    #             )
-    #             return
-
-    #         current_val = result[0] # Current DB value (0 or 1)
-
-    #         # Check for Redundancy
-    #         if requested_val == current_val:
-    #             state_text = "enabled ✅" if current_val == 1 else "disabled ❌"
-    #             await interaction.followup.send(f"Your autoclaim is already {state_text}.")
-    #             return
-
-    #         # Update the Toggle
-    #         cursor.execute(
-    #             "UPDATE players SET autoclaim_enabled = %s WHERE discord_id = %s",
-    #             (requested_val, user_id)
-    #         )
-    #         conn.commit()
-            
-    #         if requested_val == 1:
-    #             await interaction.followup.send(
-    #                 "Autoclaim ENABLED ✅\nYour missions will now be checked automatically every Sunday at 10 AM."
-    #             )
-    #         else:
-    #             await interaction.followup.send(
-    #                 "Autoclaim DISABLED ❌\nAutomatic Sunday checks have been turned off for your account."
-    #             )
-                
-    #     except Exception as e:
-    #         print(f"Error in autoclaim_toggle: {e}")
-    #         await interaction.followup.send(f"❌ Error updating settings: `{e}`")
-    #     finally:
-    #         # ✅ GUARANTEED CLEANUP: This runs even if we hit a 'return' statement above!
-    #         if cursor: cursor.close()
-    #         if conn: conn.close()
-    
     @app_commands.command(name="adjust_reminders", description="Set or disable background reminders and custom times")
     @app_commands.describe(
         war_channel="Set a new channel for war reminders",

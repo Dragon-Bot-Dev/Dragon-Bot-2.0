@@ -152,7 +152,6 @@ class PlayerCommands(commands.Cog):
         except coc.NotFound:
             await interaction.followup.send(f"❌ Clash API could not find tag: `{tag}`", ephemeral=True)
         except Exception as e:
-            import sys
             _, _, exc_tb = sys.exc_info()
             print(f"Error in player_troops (Line {exc_tb.tb_lineno}): {e}")
             await interaction.followup.send("❌ An error occurred while fetching player data.", ephemeral=True)
