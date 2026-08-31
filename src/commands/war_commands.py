@@ -7,8 +7,9 @@ from config import get_db_connection, get_db_cursor, coc_client, get_safe_cursor
 import config
 from utils import (
     fetch_clan_from_db, get_current_war_data, get_war_log_data,
-    get_cwl_data, format_datetime, format_month_day_year, ClanNotSetError,
-    check_coc_clan_tag  # Ensure this is imported for setclantag!
+    get_cwl_data, get_clan_data, format_datetime, format_month_day_year, ClanNotSetError,
+    check_coc_clan_tag,  # Ensure this is imported for setclantag!
+    fetch_player_from_DB, PlayerNotLinkedError, MissingPlayerTagError
 )
 class WarStatsView(discord.ui.View):
     def __init__(self, attacked_data, unattacked_data, source_label, our_name, opp_name, timer_text, max_atks):
@@ -250,6 +251,130 @@ class WarCommands(commands.Cog):
 
         except Exception as e:
             await interaction.followup.send(f"Error: {e}")
+
+    @app_commands.command(name="waractivity", description="See who's shown up and finished attacks in the last 7 days of war")
+    @app_commands.describe(member="Optional: look up one specific member's recent war record")
+    async def war_activity(self, interaction: discord.Interaction, member: discord.Member = None):
+        await interaction.response.defer()
+
+        try:
+            clan_tag = fetch_clan_from_db(interaction.guild.id)
+        except ClanNotSetError as e:
+            return await interaction.followup.send(str(e), ephemeral=True)
+
+        # If a member was given, resolve them to a player tag up front
+        target_tag = None
+        if member:
+            try:
+                target_tag = fetch_player_from_DB(interaction.guild.id, member, None)
+            except (PlayerNotLinkedError, MissingPlayerTagError) as e:
+                return await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
+
+        conn = get_db_connection()
+        cursor = conn.cursor(buffered=True)
+
+        try:
+            if target_tag:
+                # --- SEARCH MODE: one player's per-war breakdown ---
+                clean_target = target_tag.strip().upper()
+                cursor.execute("""
+                    SELECT player_name, war_end_time, is_cwl, stars, destruction, attacks_used, max_attacks, opponent_name
+                    FROM war_participation
+                    WHERE clan_tag = %s AND player_tag = %s AND recorded_at >= NOW() - INTERVAL 7 DAY
+                    ORDER BY war_end_time DESC
+                """, (clan_tag, clean_target))
+                detail_rows = cursor.fetchall()
+
+                if not detail_rows:
+                    return await interaction.followup.send(
+                        f"No war activity recorded for **{member.display_name}** in the last 7 days.", ephemeral=True
+                    )
+
+                display_name = detail_rows[0][0]
+                lines = [f"War Activity: {display_name} — Last 7 Days", ""]
+
+                total_used = total_possible = total_stars = 0
+                for _, end_time, is_cwl_flag, stars, destruction, used, possible, opp_name in detail_rows:
+                    wtype = "CWL" if is_cwl_flag else "Standard"
+                    date_str = end_time.strftime('%m-%d-%Y') if end_time else "N/A"
+                    lines.append(f"{date_str} [{wtype}] vs {opp_name}: {stars}⭐ {destruction:.0f}% ({used}/{possible} atks)")
+                    total_used += used
+                    total_possible += possible
+                    total_stars += stars
+
+                rate = (total_used / total_possible * 100) if total_possible else 0
+                lines.append("")
+                lines.append(f"Totals: {len(detail_rows)} wars | {total_stars}⭐ | {total_used}/{total_possible} attacks used ({rate:.0f}%)")
+
+                msg = "```yaml\n" + "\n".join(lines) + "\n```"
+                await interaction.followup.send(msg)
+                return
+
+            # --- LEADERBOARD MODE: whole roster ranked by recent activity ---
+            cursor.execute("""
+                SELECT player_tag, player_name,
+                       COUNT(*) AS wars,
+                       SUM(attacks_used) AS atks_used,
+                       SUM(max_attacks) AS atks_possible,
+                       SUM(stars) AS total_stars,
+                       AVG(destruction) AS avg_destruction
+                FROM war_participation
+                WHERE clan_tag = %s AND recorded_at >= NOW() - INTERVAL 7 DAY
+                GROUP BY player_tag, player_name
+            """, (clan_tag,))
+            stats_by_tag = {row[0].upper(): row for row in cursor.fetchall()}
+        finally:
+            cursor.close()
+            conn.close()
+
+        try:
+            clan_data = await get_clan_data(clan_tag)
+        except Exception as e:
+            return await interaction.followup.send(f"Error fetching clan roster: {e}")
+
+        leaderboard, no_data = [], []
+        for rm in clan_data.members:
+            stat = stats_by_tag.get(rm.tag.upper())
+            if not stat:
+                no_data.append(rm.name)
+                continue
+            _, _, wars, used, possible, total_stars, avg_destr = stat
+            rate = (used / possible * 100) if possible else 0
+            leaderboard.append({
+                "name": rm.name, "wars": wars, "used": used, "possible": possible,
+                "rate": rate, "stars": total_stars, "avg_destr": avg_destr or 0
+            })
+
+        leaderboard.sort(key=lambda x: (x["rate"], x["stars"]), reverse=True)
+
+        if not leaderboard and not no_data:
+            return await interaction.followup.send("No war activity recorded yet for this clan.")
+
+        lines = [
+            "War Activity — Last 7 Days",
+            f"Clan: {clan_data.name} ({clan_data.tag})",
+            ""
+        ]
+        for i, e in enumerate(leaderboard, 1):
+            lines.append(
+                f"{i:2d}. {e['name'][:15]:<15} Wars:{e['wars']} Atks:{e['used']}/{e['possible']} "
+                f"({e['rate']:.0f}%) Stars:{e['stars']} AvgDmg:{e['avg_destr']:.1f}%"
+            )
+
+        if no_data:
+            lines.append("")
+            lines.append("No War Activity This Week:")
+            for n in no_data:
+                lines.append(f" - {n}")
+
+        yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
+
+        if len(yaml_msg) > 2000:
+            chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
+            for chunk in chunks:
+                await interaction.followup.send(chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
+        else:
+            await interaction.followup.send(yaml_msg)
 
     @app_commands.command(name="cwlschedule", description="Receive information about the current CWL Schedule")
     async def cwlschedule(self, interaction: discord.Interaction):
@@ -580,6 +705,7 @@ class WarPatrol(commands.Cog):
                     if war_data and war_data.state == "warEnded":
                         if last_sent != "summary_sent":
                             await self.send_war_summary(guild_id, war_channel_id, war_data, clan_tag)
+                            await self.record_war_participation(war_data, clan_tag)
                             cursor.execute("UPDATE servers SET last_war_reminder = 'summary_sent' WHERE guild_id = %s", (guild_id,))
                             get_db_connection().commit()
                         continue
@@ -754,7 +880,64 @@ class WarPatrol(commands.Cog):
         else:
             await channel.send(content=yaml_msg)
 
-        
+    async def record_war_participation(self, war_data, clan_tag):
+        """Persists each active-lineup member's result for a finished war, so
+        /waractivity can build a rolling 7-day view of who's showing up and
+        finishing their attacks."""
+        # Resolve 'our' clan the same safe way send_war_summary does above —
+        # the earlier slacker-gate logic in this loop trusts war_data.clan
+        # blindly, which isn't safe to repeat for CWL rounds.
+        our = war_data.clan if war_data.clan.tag == clan_tag else war_data.opponent
+        opp = war_data.opponent if war_data.clan.tag == clan_tag else war_data.clan
+
+        max_atks = getattr(war_data, 'attacks_per_member', 0)
+        if max_atks == 0:
+            is_cwl = "League" in str(type(war_data)) or hasattr(war_data, 'war_tag')
+            max_atks = 1 if is_cwl else 2
+        else:
+            is_cwl = (max_atks == 1)
+
+        try:
+            war_end_dt = war_data.end_time.time
+        except AttributeError:
+            war_end_dt = war_data.end_time
+
+        our_members = sorted(our.members, key=lambda x: x.map_position or 99)[:war_data.team_size]
+
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(buffered=True)
+
+            for m in our_members:
+                atks = getattr(m, 'attacks', []) or []
+                stars = sum(a.stars for a in atks)
+                destruction = sum(a.destruction for a in atks)
+
+                cursor.execute("""
+                    INSERT INTO war_participation
+                        (clan_tag, player_tag, player_name, war_end_time, is_cwl, stars, destruction, attacks_used, max_attacks, opponent_name)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        player_name = VALUES(player_name),
+                        stars = VALUES(stars),
+                        destruction = VALUES(destruction),
+                        attacks_used = VALUES(attacks_used),
+                        max_attacks = VALUES(max_attacks),
+                        opponent_name = VALUES(opponent_name)
+                """, (
+                    clan_tag, m.tag, m.name, war_end_dt, int(is_cwl),
+                    stars, destruction, len(atks), max_atks, opp.name
+                ))
+
+            conn.commit()
+            print(f"📊 Recorded war participation for {len(our_members)} members ({clan_tag}).")
+        except Exception as e:
+            print(f"💥 Failed to record war participation for {clan_tag}: {e}")
+        finally:
+            if cursor: cursor.close()
+            if conn: conn.close()
 
     @war_reminder.before_loop
     async def before_war_reminder(self):
