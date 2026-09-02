@@ -120,10 +120,9 @@ class CoCLinkModal(discord.ui.Modal, title="Link Clash of Clans Account"):
                     clean_tag, 
                     0
                 ))
-                conn.commit() 
+                conn.commit()
                 cursor.close()
-                conn.close()
-                
+
                 await interaction.followup.send(f"✅ **Account Verified!** You have successfully linked **{clean_tag}** globally to your Discord profile!")
                 
             except Exception as e:
@@ -273,7 +272,6 @@ class BotCommands(commands.Cog):
     #                     print(f"❌ Worker Error for {discord_id}: {worker_err}")
     #
     #             cursor.close()
-    #             conn.close()
     #         except Exception as e:
     #             print(f"💥 [Background] Sunday loop critical error: {e}")
     #
@@ -562,7 +560,6 @@ class BotCommands(commands.Cog):
             await interaction.followup.send(embed=embed)
 
             cursor.close()
-            conn.close() # Always close the connection too!
         except Exception as e:
             print(f"Error in serverstatus: {e}")
             import traceback
@@ -639,7 +636,6 @@ class BotCommands(commands.Cog):
             return row[0] if row else None
         finally:
             cursor.close()
-            conn.close()
 
     def _save_user_session(self, discord_id: str, cookies_json: str):
         """Saves or updates a Discord user's cookie session."""
@@ -657,7 +653,6 @@ class BotCommands(commands.Cog):
             conn.commit()
         finally:
             cursor.close()
-            conn.close()
 
     # --- UNIFIED INTERACTIVE LINK COMMAND ---
     @app_commands.command(name='link', description="Link your Clash of Clans account or Supercell Store.")
@@ -748,7 +743,6 @@ class BotCommands(commands.Cog):
                 await interaction.followup.send("❌ You do not have an account linked to the bot.")
             
             cursor.close()
-            conn.close()
         except Exception as e:
             print(f"DB Error in Unlink: {e}")
             await interaction.followup.send("❌ An error occurred while unlinking.")
@@ -921,7 +915,6 @@ class BotCommands(commands.Cog):
     #         await interaction.followup.send(f"❌ Error updating settings: `{e}`")
     #     finally:
     #         if cursor: cursor.close()
-    #         if conn: conn.close()
 
     @app_commands.command(name="adjust_reminders", description="Set or disable background reminders and custom times")
     @app_commands.describe(
@@ -956,7 +949,6 @@ class BotCommands(commands.Cog):
         cursor.execute("SELECT clan_tag FROM servers WHERE guild_id = %s", (guild_id,))
         if not cursor.fetchone():
             cursor.close()
-            conn.close()
             return await interaction.followup.send("❌ Please link a clan using `/setclantag` before adjusting reminders.")
 
         updates = []
@@ -1000,7 +992,6 @@ class BotCommands(commands.Cog):
         # 5. Stop if no options were selected
         if not updates:
             cursor.close()
-            conn.close()
             return await interaction.followup.send("⚠️ You didn't provide any changes to make! Please select a channel to set, an option to disable, or a timer to update.")
 
         # 6. Execute Dynamic SQL
@@ -1016,7 +1007,6 @@ class BotCommands(commands.Cog):
             await interaction.followup.send(f"❌ Failed to update settings: {e}")
         finally:
             cursor.close()
-            conn.close()
     
 async def setup(bot):
     await bot.add_cog(BotCommands(bot))

@@ -325,7 +325,6 @@ class WarCommands(commands.Cog):
             stats_by_tag = {row[0].upper(): row for row in cursor.fetchall()}
         finally:
             cursor.close()
-            conn.close()
 
         try:
             clan_data = await get_clan_data(clan_tag)
@@ -936,8 +935,11 @@ class WarPatrol(commands.Cog):
         except Exception as e:
             print(f"💥 Failed to record war participation for {clan_tag}: {e}")
         finally:
+            # NOTE: get_db_connection() hands back a shared module-level connection
+            # (see config.py), not a dedicated one — closing it here would yank the
+            # rug out from under war_reminder()'s own cursor, which is still in use
+            # right after this call returns. Only close what we opened ourselves.
             if cursor: cursor.close()
-            if conn: conn.close()
 
     @war_reminder.before_loop
     async def before_war_reminder(self):
