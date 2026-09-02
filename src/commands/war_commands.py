@@ -340,7 +340,7 @@ class WarCommands(commands.Cog):
             _, _, wars, used, possible, total_stars, avg_destr = stat
             rate = (used / possible * 100) if possible else 0
             leaderboard.append({
-                "name": rm.name, "wars": wars, "used": used, "possible": possible,
+                "name": rm.name, "th": rm.town_hall, "wars": wars, "used": used, "possible": possible,
                 "rate": rate, "stars": total_stars, "avg_destr": avg_destr or 0
             })
 
@@ -356,15 +356,15 @@ class WarCommands(commands.Cog):
         ]
         for i, e in enumerate(leaderboard, 1):
             lines.append(
-                f"{i:2d}. {e['name'][:15]:<15} Wars:{e['wars']} Atks:{e['used']}/{e['possible']} "
+                f"{i:2d}. {e['name'][:15]} (TH{e['th']}): Wars:{e['wars']} Atks:{e['used']}/{e['possible']} "
                 f"({e['rate']:.0f}%) Stars:{e['stars']} AvgDmg:{e['avg_destr']:.1f}%"
             )
 
         if no_data:
             lines.append("")
             lines.append("No War Activity This Week:")
-            for n in no_data:
-                lines.append(f" - {n}")
+            for i, n in enumerate(no_data, 1):
+                lines.append(f"{i:2d}. {n}")
 
         yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
 
