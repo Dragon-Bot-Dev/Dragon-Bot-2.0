@@ -11,6 +11,11 @@ from utils import (
     check_coc_clan_tag,  # Ensure this is imported for setclantag!
     fetch_player_from_DB, PlayerNotLinkedError, MissingPlayerTagError
 )
+
+# How far back /waractivity looks. Rows are never deleted, just filtered out
+# by this window at read time — bump this any time without losing history.
+WAR_ACTIVITY_WINDOW_DAYS = 10
+
 class WarStatsView(discord.ui.View):
     def __init__(self, attacked_data, unattacked_data, source_label, our_name, opp_name, timer_text, max_atks):
         super().__init__(timeout=None) # Button timer
@@ -252,7 +257,7 @@ class WarCommands(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"Error: {e}")
 
-    @app_commands.command(name="waractivity", description="See who's shown up and finished attacks in the last 7 days of war")
+    @app_commands.command(name="waractivity", description=f"See who's shown up and finished attacks in the last {WAR_ACTIVITY_WINDOW_DAYS} days of war")
     @app_commands.describe(member="Optional: look up one specific member's recent war record")
     async def war_activity(self, interaction: discord.Interaction, member: discord.Member = None):
         await interaction.response.defer()
@@ -280,18 +285,18 @@ class WarCommands(commands.Cog):
                 cursor.execute("""
                     SELECT player_name, war_end_time, is_cwl, stars, destruction, attacks_used, max_attacks, opponent_name
                     FROM war_participation
-                    WHERE clan_tag = %s AND player_tag = %s AND recorded_at >= NOW() - INTERVAL 7 DAY
+                    WHERE clan_tag = %s AND player_tag = %s AND recorded_at >= NOW() - INTERVAL %s DAY
                     ORDER BY war_end_time DESC
-                """, (clan_tag, clean_target))
+                """, (clan_tag, clean_target, WAR_ACTIVITY_WINDOW_DAYS))
                 detail_rows = cursor.fetchall()
 
                 if not detail_rows:
                     return await interaction.followup.send(
-                        f"No war activity recorded for **{member.display_name}** in the last 7 days.", ephemeral=True
+                        f"No war activity recorded for **{member.display_name}** in the last {WAR_ACTIVITY_WINDOW_DAYS} days.", ephemeral=True
                     )
 
                 display_name = detail_rows[0][0]
-                lines = [f"War Activity: {display_name} — Last 7 Days", ""]
+                lines = [f"War Activity: {display_name} — Last {WAR_ACTIVITY_WINDOW_DAYS} Days", ""]
 
                 total_used = total_possible = total_stars = 0
                 for _, end_time, is_cwl_flag, stars, destruction, used, possible, opp_name in detail_rows:
@@ -319,9 +324,9 @@ class WarCommands(commands.Cog):
                        SUM(stars) AS total_stars,
                        AVG(destruction) AS avg_destruction
                 FROM war_participation
-                WHERE clan_tag = %s AND recorded_at >= NOW() - INTERVAL 7 DAY
+                WHERE clan_tag = %s AND recorded_at >= NOW() - INTERVAL %s DAY
                 GROUP BY player_tag, player_name
-            """, (clan_tag,))
+            """, (clan_tag, WAR_ACTIVITY_WINDOW_DAYS))
             stats_by_tag = {row[0].upper(): row for row in cursor.fetchall()}
         finally:
             cursor.close()
@@ -350,7 +355,7 @@ class WarCommands(commands.Cog):
             return await interaction.followup.send("No war activity recorded yet for this clan.")
 
         lines = [
-            "War Activity — Last 7 Days",
+            f"War Activity — Last {WAR_ACTIVITY_WINDOW_DAYS} Days",
             f"Clan: {clan_data.name} ({clan_data.tag})",
             ""
         ]
@@ -881,8 +886,8 @@ class WarPatrol(commands.Cog):
 
     async def record_war_participation(self, war_data, clan_tag):
         """Persists each active-lineup member's result for a finished war, so
-        /waractivity can build a rolling 7-day view of who's showing up and
-        finishing their attacks."""
+        /waractivity can build a rolling window (see WAR_ACTIVITY_WINDOW_DAYS)
+        of who's showing up and finishing their attacks."""
         # Resolve 'our' clan the same safe way send_war_summary does above —
         # the earlier slacker-gate logic in this loop trusts war_data.clan
         # blindly, which isn't safe to repeat for CWL rounds.
