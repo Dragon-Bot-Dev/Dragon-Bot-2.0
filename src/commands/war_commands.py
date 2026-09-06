@@ -16,6 +16,26 @@ from utils import (
 # by this window at read time — bump this any time without losing history.
 WAR_ACTIVITY_WINDOW_DAYS = 10
 
+
+def _war_end_datetime(war_data):
+    """coc.py Timestamp objects expose a naive-UTC datetime via .time; plain
+    datetimes (some code paths) don't have that attribute."""
+    try:
+        return war_data.end_time.time
+    except AttributeError:
+        return war_data.end_time
+
+
+def _war_identifier(war_data):
+    """A stable id for 'this specific war/round'. CWL rounds carry a unique
+    war_tag for their whole lifecycle; regular wars don't have one, but their
+    end_time is fixed from the moment prep starts, so it works as a fallback."""
+    war_tag = getattr(war_data, 'war_tag', None)
+    if war_tag:
+        return war_tag
+    return str(_war_end_datetime(war_data))
+
+
 class WarStatsView(discord.ui.View):
     def __init__(self, attacked_data, unattacked_data, source_label, our_name, opp_name, timer_text, max_atks):
         super().__init__(timeout=None) # Button timer
@@ -683,10 +703,10 @@ class WarPatrol(commands.Cog):
 
         try:
             # Explicit column sequencing completely matches loop unpacking order below
-            cursor.execute("SELECT clan_tag, guild_id, war_channel_id, last_war_reminder, war_reminder_1, war_reminder_2 FROM servers")
+            cursor.execute("SELECT clan_tag, guild_id, war_channel_id, last_war_reminder, war_reminder_1, war_reminder_2, last_war_id FROM servers")
             tracked_clans = cursor.fetchall()
 
-            for clan_tag, guild_id, war_channel_id, last_sent, cfg_hours_1, cfg_hours_2 in tracked_clans:
+            for clan_tag, guild_id, war_channel_id, last_sent, cfg_hours_1, cfg_hours_2, last_war_id in tracked_clans:
                 if not clan_tag or not war_channel_id: continue
 
                 # Match /serverstatus's displayed defaults — unset timers are NULL in the DB
@@ -704,6 +724,27 @@ class WarPatrol(commands.Cog):
                                     if cwl_war.state != "notInWar":
                                         war_data = cwl_war; break
                         except: pass
+
+                    # 2b. NEW-WAR DETECTION — independent of state transitions.
+                    # CWL never shows this loop a "preparation" state between rounds:
+                    # get_current_war() keeps reporting the PREVIOUS round's warEnded
+                    # data throughout the next round's entire prep day, then jumps
+                    # straight to the new round's inWar state. That means the
+                    # "reset on preparation" branch below never fires between CWL
+                    # rounds, so last_war_reminder stays stuck on whatever the
+                    # previous round last set it to — silently blocking every
+                    # reminder (and war_participation recording!) for every later
+                    # round. Comparing a stable per-war id catches the new war/round
+                    # the moment we see it, regardless of which states we observed.
+                    if war_data and war_data.state != "notInWar":
+                        current_war_id = _war_identifier(war_data)
+                        if current_war_id != last_war_id:
+                            last_sent = None
+                            cursor.execute(
+                                "UPDATE servers SET last_war_reminder = NULL, last_war_id = %s WHERE guild_id = %s",
+                                (current_war_id, guild_id)
+                            )
+                            get_db_connection().commit()
 
                     # 3. TRANSITION & SUMMARY LOGIC
                     if war_data and war_data.state == "warEnded":
@@ -901,10 +942,7 @@ class WarPatrol(commands.Cog):
         else:
             is_cwl = (max_atks == 1)
 
-        try:
-            war_end_dt = war_data.end_time.time
-        except AttributeError:
-            war_end_dt = war_data.end_time
+        war_end_dt = _war_end_datetime(war_data)
 
         our_members = sorted(our.members, key=lambda x: x.map_position or 99)[:war_data.team_size]
 

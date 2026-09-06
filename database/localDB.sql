@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS servers (
     last_raid_reminder DATETIME DEFAULT NULL,
     war_reminder_1 TINYINT(1) DEFAULT 0,
     war_reminder_2 TINYINT(1) DEFAULT 0,
+    -- Stable id (war_tag, or end_time for non-CWL wars) of the last war we
+    -- evaluated, so WarPatrol.war_reminder can detect a new war/CWL round
+    -- even when it never observes a "preparation" state in between.
+    last_war_id VARCHAR(50) DEFAULT NULL
 );
 
 -- Records each roster member's result for every war that ends, for a rolling
