@@ -36,6 +36,41 @@ def _war_identifier(war_data):
     return str(_war_end_datetime(war_data))
 
 
+async def send_yaml_chunks(sender, lines, prefix=None, limit=1990):
+    """Sends `lines` as one or more ```yaml code blocks, splitting on whole
+    lines only — never mid-line — so every chunk gets a matching opening and
+    closing fence. The old char-slicing approach (yaml_msg[i:i+N]) could cut
+    a fence in half, leaving a message with an unclosed or missing code
+    block, which is what made /waractivity render garbled once the roster
+    grew past one message.
+
+    `sender` is an async callable taking the full message text (e.g.
+    `interaction.followup.send` or `lambda t: channel.send(content=t)`).
+    `prefix` (e.g. a bold header) is sent as plain text before the first
+    code block only, if given.
+    """
+    fence_open, fence_close = "```yaml\n", "\n```"
+    overhead = len(fence_open) + len(fence_close)
+
+    batches, current, current_len = [], [], 0
+    for line in lines:
+        if len(line) + overhead > limit:
+            line = line[:limit - overhead - 1] + "…"
+        added_len = len(line) + 1  # + newline
+        if current and current_len + added_len + overhead > limit:
+            batches.append(current)
+            current, current_len = [], 0
+        current.append(line)
+        current_len += added_len
+    batches.append(current)
+
+    for i, batch in enumerate(batches):
+        text = fence_open + "\n".join(batch) + fence_close
+        if i == 0 and prefix:
+            text = f"{prefix}\n{text}"
+        await sender(text)
+
+
 class WarStatsView(discord.ui.View):
     def __init__(self, attacked_data, unattacked_data, source_label, our_name, opp_name, timer_text, max_atks):
         super().__init__(timeout=None) # Button timer
@@ -264,15 +299,7 @@ class WarCommands(commands.Cog):
                 for e in unattacked:
                     lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
 
-                yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
-                
-                # 3. Message Chunking Guard (Bypasses character limitations)
-                if len(yaml_msg) > 2000:
-                    chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
-                    for chunk in chunks:
-                        await interaction.followup.send(chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
-                else:
-                    await interaction.followup.send(yaml_msg)
+                await send_yaml_chunks(interaction.followup.send, lines)
 
         except Exception as e:
             await interaction.followup.send(f"Error: {e}")
@@ -331,8 +358,7 @@ class WarCommands(commands.Cog):
                 lines.append("")
                 lines.append(f"Totals: {len(detail_rows)} wars | {total_stars}⭐ | {total_used}/{total_possible} attacks used ({rate:.0f}%)")
 
-                msg = "```yaml\n" + "\n".join(lines) + "\n```"
-                await interaction.followup.send(msg)
+                await send_yaml_chunks(interaction.followup.send, lines)
                 return
 
             # --- LEADERBOARD MODE: whole roster ranked by recent activity ---
@@ -387,18 +413,11 @@ class WarCommands(commands.Cog):
 
         if no_data:
             lines.append("")
-            lines.append("No War Activity This Week:")
+            lines.append(f"No War Activity in the Last {WAR_ACTIVITY_WINDOW_DAYS} Days:")
             for i, n in enumerate(no_data, 1):
                 lines.append(f"{i:2d}. {n}")
 
-        yaml_msg = "```yaml\n" + "\n".join(lines) + "\n```"
-
-        if len(yaml_msg) > 2000:
-            chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
-            for chunk in chunks:
-                await interaction.followup.send(chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
-        else:
-            await interaction.followup.send(yaml_msg)
+        await send_yaml_chunks(interaction.followup.send, lines)
 
     @app_commands.command(name="cwlschedule", description="Receive information about the current CWL Schedule")
     async def cwlschedule(self, interaction: discord.Interaction):
@@ -663,15 +682,7 @@ class WarCommands(commands.Cog):
                 lines.append("-" * 25)
 
             # 6. Final Formatting and character limit safety
-            final_msg = "```yaml\n" + "\n".join(lines) + "```"
-            
-            if len(final_msg) > 2000:
-                # Split the message if it's too long for Discord
-                chunks = [final_msg[i:i+1990] for i in range(0, len(final_msg), 1990)]
-                for chunk in chunks:
-                    await interaction.followup.send(chunk if chunk.startswith("```") else f"```yaml\n{chunk}")
-            else:
-                await interaction.followup.send(final_msg)
+            await send_yaml_chunks(interaction.followup.send, lines)
 
         except Exception as e:
             await interaction.followup.send(f"Scouting Error: {e}")
@@ -912,18 +923,7 @@ class WarPatrol(commands.Cog):
             for e in unattacked:
                 lines.append(f"{e['rel_pos']:2d}. TH{e['th']:2d} {e['name']}")
 
-        yaml_msg = f"**The War has ended!**\n```yaml\n" + "\n".join(lines) + "\n```"
-        
-        # 4. Message Chunking Guard (Bypasses character limitations)
-        if len(yaml_msg) > 2000:
-            chunks = [yaml_msg[i:i+1980] for i in range(0, len(yaml_msg), 1980)]
-            for idx, chunk in enumerate(chunks):
-                if idx == 0:
-                    await channel.send(content=chunk if chunk.startswith("🎖️") else f"```yaml\n{chunk}\n```")
-                else:
-                    await channel.send(content=chunk if chunk.startswith("```") else f"```yaml\n{chunk}\n```")
-        else:
-            await channel.send(content=yaml_msg)
+        await send_yaml_chunks(lambda text: channel.send(content=text), lines, prefix="**The War has ended!**")
 
     async def record_war_participation(self, war_data, clan_tag):
         """Persists each active-lineup member's result for a finished war, so
