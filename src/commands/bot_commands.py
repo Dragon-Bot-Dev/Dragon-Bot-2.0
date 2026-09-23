@@ -320,8 +320,8 @@ class BotCommands(commands.Cog):
         summary_embed.add_field(
             name="**Extras**",
             value=(
-                "> `[G]` `/flipcoin` · `/help` · `/about` · `/receiveposts` (Reddit Leaks) \n"
-                
+                "> `[G]` `/flipcoin` · `/help` · `/about` · `/receiveposts` (Reddit Leaks) · `/patchnotes` (CoC Updates) \n"
+
             ),
             inline=False
         )
@@ -344,7 +344,8 @@ class BotCommands(commands.Cog):
                 "> [C] `/warlog` — Check recent war history\n"
                 "> [C] `/cwlprep` — Scout matchup levels for current CWL\n"
                 "> [C] `/cwlschedule` — View CWL rounds and opponents\n"
-                "> [C] `/cwlclansearch` — Search opponent rosters and levels"
+                "> [C] `/cwlclansearch` — Search opponent rosters and levels\n"
+                "> [C] `/waractivity` — Who's been active in war the last 10 days"
             ),
             inline=False
         )
@@ -364,7 +365,7 @@ class BotCommands(commands.Cog):
             name="⚙️ Settings & Admin",
             value=(
                 "> [C] `/setclantag` — Link clan and set reminder channels\n"
-                "> [C] `/adjust_reminders` — Mute War or Raid pings (Admins)\n"
+                "> [C] `/adjust_reminders` — Mute War, Raid, or News pings (Admins)\n"
                 "> [C] `/serverstatus` — View current server config\n"
                 "> [G] `/link` / `/unlink` — Connect/disconnect CoC tag to Discord"
             ),
@@ -377,6 +378,7 @@ class BotCommands(commands.Cog):
                 "> [G] `/flipcoin` — Flips a coin \n"
                 "> [G] `/about` — Displays info about Dragon Bot \n"
                 "> [G] `/receiveposts` — Receive posts from Reddit; default subreddit is ClashOfClansLeaks\n"
+                "> [G] `/patchnotes` — Latest official Clash of Clans update/balance posts\n"
                 "> [G] `/help` — This command"
                 
             ),
@@ -499,22 +501,23 @@ class BotCommands(commands.Cog):
             
             # Updated to fetch the new custom interval values from the database
             cursor.execute(
-                "SELECT clan_tag, war_channel_id, raid_channel_id, war_reminder_1, war_reminder_2 FROM servers WHERE guild_id = %s", 
+                "SELECT clan_tag, war_channel_id, raid_channel_id, war_reminder_1, war_reminder_2, news_channel_id FROM servers WHERE guild_id = %s",
                 (guild_id,)
             )
             row = cursor.fetchone()
-            
+
             if row:
                 # Keep the formatting clean, but show raw text if empty
                 raw_clan_tag = row[0]
                 clan_tag = f"`{raw_clan_tag}`" if raw_clan_tag else "`❌ Not Set`"
                 war_mention = f"<#{row[1]}>" if row[1] else "`❌ Not Configured`"
                 raid_mention = f"<#{row[2]}>" if row[2] else "`❌ Not Configured`"
-                
+                news_mention = f"<#{row[5]}>" if row[5] else "`❌ Not Configured`"
+
                 # Assign custom intervals, mapping to defaults if somehow missing
                 t1_hours = row[3] if row[3] is not None else 4
                 t2_hours = row[4] if row[4] is not None else 1
-                
+
                 timer_details = f"• Timer 1: `{t1_hours}h left`"
                 if t2_hours > 0:
                     timer_details += f"\n• Timer 2: `{t2_hours}h left` (Ping Active)"
@@ -524,6 +527,7 @@ class BotCommands(commands.Cog):
                 clan_tag = "`❌ Run /setclantag to configure`"
                 war_mention = "`❌ Not Configured`"
                 raid_mention = "`❌ Not Configured`"
+                news_mention = "`❌ Not Configured`"
                 timer_details = "`❌ Not Configured`"
 
             # 2. Fetch Linked Players
@@ -549,7 +553,8 @@ class BotCommands(commands.Cog):
             embed.add_field(name="Current Clan", value=f"{clan_tag}", inline=False)
             embed.add_field(name="⚔️ War Reminders Channel", value=war_mention, inline=True)
             embed.add_field(name="🏰 Raid Reminders Channel", value=raid_mention, inline=True)
-            
+            embed.add_field(name="📰 News Updates Channel", value=news_mention, inline=True)
+
             # Clear new field displaying custom configuration states
             embed.add_field(name="⏱️ Custom War Intervals", value=timer_details, inline=False)
 
@@ -920,6 +925,7 @@ class BotCommands(commands.Cog):
     @app_commands.describe(
         war_channel="Set a new channel for war reminders",
         raid_channel="Set a new channel for capital raid reminders",
+        news_channel="Set a new channel for Clash of Clans update/balance-change posts",
         disable="Select a reminder type to disable completely",
         reminder_hours_1="Primary war reminder time (e.g. 6 for 6h left)",
         reminder_hours_2="Secondary war reminder time (e.g. 2 for 2h left. Set 0 to disable)"
@@ -927,14 +933,17 @@ class BotCommands(commands.Cog):
     @app_commands.choices(disable=[
         app_commands.Choice(name="⚔️ Disable War Reminders", value="war"),
         app_commands.Choice(name="🏰 Disable Raid Reminders", value="raid"),
-        app_commands.Choice(name="🚫 Disable Both", value="both")
+        app_commands.Choice(name="📰 Disable News Updates", value="news"),
+        app_commands.Choice(name="🚫 Disable War + Raid", value="both"),
+        app_commands.Choice(name="🚫 Disable Everything", value="all")
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def adjust_reminders(
-        self, 
-        interaction: discord.Interaction, 
+        self,
+        interaction: discord.Interaction,
         war_channel: discord.TextChannel = None,
         raid_channel: discord.TextChannel = None,
+        news_channel: discord.TextChannel = None,
         disable: app_commands.Choice[str] = None,
         reminder_hours_1: int = None,
         reminder_hours_2: int = None
@@ -957,23 +966,31 @@ class BotCommands(commands.Cog):
         
         # 2. Handle Disable Arguments
         if disable:
-            if disable.value in ("war", "both"):
+            if disable.value in ("war", "both", "all"):
                 updates.append("war_channel_id = NULL")
                 msg_parts.append("⚔️ War reminders disabled.")
-            if disable.value in ("raid", "both"):
+            if disable.value in ("raid", "both", "all"):
                 updates.append("raid_channel_id = NULL")
                 msg_parts.append("🏰 Raid reminders disabled.")
-                
+            if disable.value in ("news", "all"):
+                updates.append("news_channel_id = NULL")
+                msg_parts.append("📰 News updates disabled.")
+
         # 3. Handle Channel Updates (Overrides if you try to set AND disable at the same time)
-        if war_channel and not (disable and disable.value in ("war", "both")):
+        if war_channel and not (disable and disable.value in ("war", "both", "all")):
             updates.append("war_channel_id = %s")
             params.append(str(war_channel.id))
             msg_parts.append(f"⚔️ War reminders set to {war_channel.mention}.")
-            
-        if raid_channel and not (disable and disable.value in ("raid", "both")):
+
+        if raid_channel and not (disable and disable.value in ("raid", "both", "all")):
             updates.append("raid_channel_id = %s")
             params.append(str(raid_channel.id))
             msg_parts.append(f"🏰 Raid reminders set to {raid_channel.mention}.")
+
+        if news_channel and not (disable and disable.value in ("news", "all")):
+            updates.append("news_channel_id = %s")
+            params.append(str(news_channel.id))
+            msg_parts.append(f"📰 News updates set to {news_channel.mention}.")
             
         # 4. Handle Custom Timers
         if reminder_hours_1 is not None:

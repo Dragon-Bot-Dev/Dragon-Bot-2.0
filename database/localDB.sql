@@ -31,7 +31,17 @@ CREATE TABLE IF NOT EXISTS servers (
     -- Stable id (war_tag, or end_time for non-CWL wars) of the last war we
     -- evaluated, so WarPatrol.war_reminder can detect a new war/CWL round
     -- even when it never observes a "preparation" state in between.
-    last_war_id VARCHAR(50) DEFAULT NULL
+    last_war_id VARCHAR(50) DEFAULT NULL,
+    -- Per-guild opt-in channel for Clash of Clans blog update announcements.
+    news_channel_id BIGINT DEFAULT NULL
+);
+
+-- Small generic key/value store for bot-wide state that isn't per-guild or
+-- per-clan (unlike everything else in this schema). Currently holds just
+-- 'last_news_url', tracking the newest blog post NewsPatrol has announced.
+CREATE TABLE IF NOT EXISTS bot_state (
+    state_key VARCHAR(50) PRIMARY KEY,
+    state_value TEXT
 );
 
 -- Records each roster member's result for every war that ends, for a rolling
