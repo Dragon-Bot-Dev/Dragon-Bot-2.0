@@ -33,11 +33,13 @@ async def start_health_server():
 async def setup():
     """The main manager that runs before the bot starts."""
     async with bot:
-        # 1. Start Clash of Clans connection
-        await initialize_coc() 
-
+        # Bind the health port first so Railway's healthcheck passes even if
+        # the CoC login below is slow.
         await start_health_server()
-        
+
+        # 1. Start Clash of Clans connection
+        await initialize_coc()
+
         await asyncio.sleep(10)
         
         await load_extensions() 
