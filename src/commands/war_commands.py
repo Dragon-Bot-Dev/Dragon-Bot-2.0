@@ -12,9 +12,14 @@ from utils import (
     fetch_player_from_DB, PlayerNotLinkedError, MissingPlayerTagError
 )
 
-# How far back /waractivity looks. Rows are never deleted, just filtered out
-# by this window at read time — bump this any time without losing history.
+# How far back /waractivity looks.
 WAR_ACTIVITY_WINDOW_DAYS = 10
+
+# war_participation rows older than this are deleted by WarPatrol.war_reminder.
+# Must stay larger than WAR_ACTIVITY_WINDOW_DAYS, or /waractivity would be
+# reading rows that have already been pruned. The privacy policy on the
+# website states this retention period — update it if this changes.
+WAR_HISTORY_RETENTION_DAYS = 14
 
 
 def _war_end_datetime(war_data):
@@ -711,6 +716,18 @@ class WarPatrol(commands.Cog):
         print("--- [War Reminder Heartbeat] ---")
         cursor = await get_safe_cursor(retries=3, delay=5)
         if not cursor: return
+
+        # Prune old war history. Isolated so a failure here can never stop reminders.
+        try:
+            cursor.execute(
+                "DELETE FROM war_participation WHERE recorded_at < NOW() - INTERVAL %s DAY",
+                (WAR_HISTORY_RETENTION_DAYS,)
+            )
+            if cursor.rowcount:
+                print(f"🧹 Pruned {cursor.rowcount} war history rows older than {WAR_HISTORY_RETENTION_DAYS} days.")
+            get_db_connection().commit()
+        except Exception as prune_err:
+            print(f"⚠️ War history prune failed: {prune_err}")
 
         try:
             # Explicit column sequencing completely matches loop unpacking order below
