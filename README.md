@@ -75,3 +75,5 @@ Keeping your server synchronized with the wider Clash of Clans ecosystem and max
 
 Developed under the **Dragon-Bot-Dev** Organization.
 This content is not affiliated with, endorsed, sponsored, or specifically approved by Supercell and Supercell is not responsible for it.
+
+Hero, equipment and pet art in `/playerheroes` is served from [ClashKing's asset repository](https://github.com/ClashKingInc/ClashKingAssets). All game assets and trademarks belong to Supercell; see [Supercell's Fan Content Policy](https://supercell.com/en/fan-content-policy/).

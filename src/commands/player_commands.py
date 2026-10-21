@@ -1,4 +1,5 @@
 
+import io
 import sys
 import discord
 import time
@@ -9,9 +10,50 @@ from discord import app_commands, Embed
 # Import helpers from your config and utils
 from config import get_db_cursor, coc_client
 from utils import (
-    fetch_player_from_DB, get_player_data, 
+    fetch_player_from_DB, get_player_data,
     PlayerNotLinkedError, MissingPlayerTagError
 )
+from services.hero_card import build_hero_image
+from commands.war_commands import send_yaml_chunks
+
+
+def _hero_image_data(player_data):
+    """Plain dicts for services.hero_card (home-village heroes with their
+    equipped gear, plus pets)."""
+    heroes = [
+        {
+            "name": h.name, "level": h.level, "is_max": h.is_max,
+            "gear": [{"name": e.name, "level": e.level, "is_max": e.is_max} for e in h.equipment],
+        }
+        for h in player_data.heroes if h.is_home_base
+    ]
+    pets = [{"name": p.name, "level": p.level, "is_max": p.is_max} for p in player_data.pets]
+    return heroes, pets
+
+
+def _heroes_yaml_lines(player_data):
+    """Text fallback for /playerheroes, used if the image can't be rendered."""
+    def format_lvl(item):
+        rarity = "EPIC" if item.max_level > 18 else "Common"
+        max_str = '★' if item.is_max else ''
+        return f"  {item.name} ({rarity}): Lvl {item.level}/{item.max_level} {max_str}"
+
+    hero_list = [
+        f"  {h.name}: Lvl {h.level}/{h.max_level} {'(MAXED)' if h.is_max else ''}"
+        for h in player_data.heroes if h.is_home_base
+    ]
+    equipment_list = [format_lvl(e) for e in sorted(player_data.equipment, key=lambda x: x.level, reverse=True)]
+    pet_list = [
+        f"  {p.name}: Lvl {p.level}/{p.max_level} {'(MAXED)' if p.is_max else ''}"
+        for p in sorted(player_data.pets, key=lambda x: x.level, reverse=True)
+    ]
+    return [
+        f"Player: {player_data.name}",
+        f"Tag: {player_data.tag}",
+        "\nHeroes:", *hero_list,
+        "Equipment:", *equipment_list,
+        "Pets:", *pet_list,
+    ]
 
 class PlayerCommands(commands.Cog):
     def __init__(self, bot):
@@ -158,55 +200,34 @@ class PlayerCommands(commands.Cog):
 
     @app_commands.command(name="playerheroes", description="Get info on player's heroes, equipment, and pets")
     async def player_equips(self, interaction: discord.Interaction, user: discord.User = None, player_tag: str = None):
-        """Displays all equipment in a single list sorted by level."""
+        """Renders heroes (with equipped gear) and pets as an image."""
+        # Image rendering + icon downloads can outlast Discord's 3s window.
+        await interaction.response.defer()
+
         try:
             target_user = user or interaction.user
             tag = fetch_player_from_DB(None, target_user, player_tag)
             player_data = await get_player_data(tag)
 
-            builder_heroes = ['Battle Machine', 'Battle Copter']
+            heroes, pets = _hero_image_data(player_data)
+            if not heroes and not pets:
+                return await interaction.followup.send(f"**{player_data.name}** has no heroes or pets yet.")
 
-            def format_lvl(item): 
-                # Identifying rarity for the display string
-                rarity = "EPIC" if item.max_level > 18 else "Common"
-                max_str = '★' if item.is_max else ''
-                return f"  {item.name} ({rarity}): Lvl {item.level}/{item.max_level} {max_str}"
+            try:
+                png = await build_hero_image(heroes, pets)
+            except Exception as render_err:
+                # Never leave the user with nothing: fall back to the old text output.
+                print(f"⚠️ Hero image render failed, using text fallback: {render_err}")
+                return await send_yaml_chunks(interaction.followup.send, _heroes_yaml_lines(player_data))
 
-            # 1. Format and filter Heroes
-            hero_list = [
-                f"  {h.name}: Lvl {h.level}/{h.max_level} {'(MAXED)' if h.is_max else ''}" 
-                for h in player_data.heroes if h.name not in builder_heroes
-            ]
-            
-            # 2. Merge and Sort ALL Equipment by level (highest first)
-            # We sort the actual objects before converting to text
-            sorted_equipment = sorted(player_data.equipment, key=lambda x: x.level, reverse=True)
-            equipment_list = [format_lvl(e) for e in sorted_equipment]
+            embed = discord.Embed(title=f"{player_data.name} ({player_data.tag})", color=0x3498db)
+            embed.set_image(url="attachment://heroes.png")
+            await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(png), filename="heroes.png"))
 
-            # 3. Sort and Format Pets
-            sorted_pets = sorted(player_data.pets, key=lambda x: x.level, reverse=True)
-            pet_list = [f"  {p.name}: Lvl {p.level}/{p.max_level} {'(MAXED)' if p.is_max else ''}" for p in sorted_pets]
-
-            # Build the final YAML output
-            lines = [
-                f"Player: {player_data.name}",
-                f"Tag: {player_data.tag}",
-                "\nHeroes:",
-                *hero_list,
-                "Equipment:",
-                *equipment_list,
-                "Pets:",
-                *pet_list
-            ]
-
-            res = f"```yaml\n" + "\n".join(lines) + "```"
-            await interaction.response.send_message(res)
-            
+        except (PlayerNotLinkedError, MissingPlayerTagError) as e:
+            await interaction.followup.send(f"⚠️ {e}", ephemeral=True)
         except Exception as e:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"Error: {e}", ephemeral=True)
+            await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(PlayerCommands(bot))
