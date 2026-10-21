@@ -6,7 +6,7 @@ import time
 import coc
 from discord.ext import commands
 from discord import app_commands, Embed
-from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER, BUILDER_TROOPS_ORDER, SPELL_ORDER
+from coc.constants import HOME_TROOP_ORDER, BUILDER_TROOPS_ORDER, SPELL_ORDER
 
 # Import helpers from your config and utils
 from config import get_db_cursor, coc_client
@@ -16,11 +16,8 @@ from utils import (
 )
 from services.hero_card import build_hero_image
 from services.level_card import build_levels_image
+from services.game_data import ensure_loaded, siege_machine_names, pet_names
 from commands.war_commands import send_yaml_chunks
-
-# Pets newer than coc.py's PETS_ORDER. The library files unknown pets under
-# troops, so they'd be missing from Player.pets and show up as troops instead.
-UNKNOWN_TO_COC_PETS = {"Greedy Raven"}
 
 
 def _in_game_order(units, order_list):
@@ -67,10 +64,12 @@ def _levels_sections(player_data, village):
 
     sections = []
     if village in ("home", "both"):
-        home = [t for t in _sorted_home_troops(player_data) if t.name not in UNKNOWN_TO_COC_PETS]
-        troops = [t for t in home if t.name not in SIEGE_MACHINE_ORDER
+        # The API lumps troops, sieges and pets together; services.game_data tells them apart.
+        sieges_set, pets_set = siege_machine_names(), pet_names()
+        home = [t for t in _sorted_home_troops(player_data) if t.name not in pets_set]
+        troops = [t for t in home if t.name not in sieges_set
                   and all(w not in t.name.lower() for w in LEVELS_EXCLUDE)]
-        sieges = [t for t in home if t.name in SIEGE_MACHINE_ORDER]
+        sieges = [t for t in home if t.name in sieges_set]
         for title, category, units in (("Home Troops", "troops", troops),
                                        ("Siege Machines", "troops", sieges),
                                        ("Spells", "spells", _sorted_spells(player_data))):
@@ -93,7 +92,8 @@ def _levels_yaml_lines(player_data, sections):
 
 
 def _all_pets(player_data):
-    extra = [t for t in player_data.home_troops if t.name in UNKNOWN_TO_COC_PETS]
+    # Pets coc.py doesn't know about are filed under troops by the library.
+    extra = [t for t in player_data.home_troops if t.name in pet_names()]
     return list(player_data.pets) + extra
 
 
@@ -228,6 +228,7 @@ class PlayerCommands(commands.Cog):
             # unrecognised troop makes Player.home_troops raise for the whole player.
             player_data = await get_player_data(tag, load_game_data=False)
 
+            await ensure_loaded()
             sections = _levels_sections(player_data, village)
             if not sections:
                 return await interaction.followup.send(f"No troops, spells or sieges found for **{player_data.name}**.")
@@ -265,6 +266,7 @@ class PlayerCommands(commands.Cog):
             # See /playerlevels: avoid coc.py's lagging static data.
             player_data = await get_player_data(tag, load_game_data=False)
 
+            await ensure_loaded()
             hero_objs, pet_objs = _home_heroes(player_data), _all_pets(player_data)
             heroes, pets = _hero_image_data(hero_objs, pet_objs)
             if not heroes and not pets:
