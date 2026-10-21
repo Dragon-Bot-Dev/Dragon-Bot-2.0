@@ -61,15 +61,16 @@ _RETRY_SECONDS = 300
 
 
 def _clean(name):
-    # Mirrors the name-cleaning rule in the ClashKingAssets README.
+    # Mirrors the name-cleaning rule in the ClashKingAssets README. Straight
+    # apostrophes are kept: their files are named e.g. "santa's_surprise".
     return (name.lower().replace(" ", "_").replace(".", "").replace("?", "")
-            .replace("\\q", "").replace("’", "").replace("'", ""))
+            .replace("\\q", "").replace("’", ""))
 
 
 def icon_url(category, name):
     cleaned = _clean(name)
-    if category == "equipment":
-        return f"{ASSET_BASE}/equipment/{cleaned}.webp"
+    if category in ("equipment", "spells"):
+        return f"{ASSET_BASE}/{category}/{cleaned}.webp"
     return f"{ASSET_BASE}/{category}/{cleaned}/icon.webp"
 
 

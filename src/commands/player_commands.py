@@ -6,7 +6,7 @@ import time
 import coc
 from discord.ext import commands
 from discord import app_commands, Embed
-from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER, SPELL_ORDER
+from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER, BUILDER_TROOPS_ORDER, SPELL_ORDER
 
 # Import helpers from your config and utils
 from config import get_db_cursor, coc_client
@@ -15,6 +15,7 @@ from utils import (
     PlayerNotLinkedError, MissingPlayerTagError
 )
 from services.hero_card import build_hero_image
+from services.level_card import build_levels_image
 from commands.war_commands import send_yaml_chunks
 
 # Pets newer than coc.py's PETS_ORDER. The library files unknown pets under
@@ -22,12 +23,17 @@ from commands.war_commands import send_yaml_chunks
 UNKNOWN_TO_COC_PETS = {"Greedy Raven"}
 
 
+def _in_game_order(units, order_list):
+    """Sorts units by a coc.py order list, with ones the library doesn't know
+    about last (the library itself sorts them first)."""
+    order = {name: i for i, name in enumerate(order_list)}
+    return sorted(units, key=lambda u: order.get(u.name, len(order)))
+
+
 def _sorted_home_troops(player_data):
-    """Home troops in game order, with troops coc.py doesn't know about last
-    (the library sorts them first). Needs a player fetched with
+    """Home troops in game order. Needs a player fetched with
     load_game_data=False, otherwise unknown troops make home_troops raise."""
-    order = {name: i for i, name in enumerate(HOME_TROOP_ORDER)}
-    return sorted(player_data.home_troops, key=lambda t: order.get(t.name, len(order)))
+    return _in_game_order(player_data.home_troops, HOME_TROOP_ORDER)
 
 
 def _home_heroes(player_data):
@@ -45,10 +51,45 @@ def _home_heroes(player_data):
 
 
 def _sorted_spells(player_data):
-    """Spells in game order, with ones coc.py doesn't know about last (the
-    library sorts them first)."""
-    order = {name: i for i, name in enumerate(SPELL_ORDER)}
-    return sorted(player_data.spells, key=lambda s: order.get(s.name, len(order)))
+    return _in_game_order(player_data.spells, SPELL_ORDER)
+
+
+# Name fragments hidden from /playerlevels (super/seasonal variants).
+LEVELS_EXCLUDE = ['super', 'sneaky', 'ice golem', 'inferno', 'rocket balloon', 'ice hound']
+
+
+def _levels_sections(player_data, village):
+    """Sections for services.level_card (and its text fallback)."""
+    def entry(category, u):
+        max_level = getattr(u, "max_level", u.level)
+        return {"category": category, "name": u.name, "level": u.level,
+                "max_level": max_level, "is_max": u.level == max_level}
+
+    sections = []
+    if village in ("home", "both"):
+        home = [t for t in _sorted_home_troops(player_data) if t.name not in UNKNOWN_TO_COC_PETS]
+        troops = [t for t in home if t.name not in SIEGE_MACHINE_ORDER
+                  and all(w not in t.name.lower() for w in LEVELS_EXCLUDE)]
+        sieges = [t for t in home if t.name in SIEGE_MACHINE_ORDER]
+        for title, category, units in (("Home Troops", "troops", troops),
+                                       ("Siege Machines", "troops", sieges),
+                                       ("Spells", "spells", _sorted_spells(player_data))):
+            if units:
+                sections.append({"title": title, "items": [entry(category, u) for u in units]})
+    if village in ("builder", "both"):
+        builder = _in_game_order(player_data.builder_troops, BUILDER_TROOPS_ORDER)
+        if builder:
+            sections.append({"title": "Builder Troops", "items": [entry("troops", u) for u in builder]})
+    return sections
+
+
+def _levels_yaml_lines(player_data, sections):
+    """Text fallback for /playerlevels, used if the image can't be rendered."""
+    lines = [f"PLAYER: {player_data.name} ({player_data.tag})"]
+    for sec in sections:
+        lines.append(f"\n--- {sec['title'].upper()} ---")
+        lines.extend(f"  {i['name']}: {i['level']}/{i['max_level']} {'★' if i['is_max'] else ''}" for i in sec["items"])
+    return lines
 
 
 def _all_pets(player_data):
@@ -179,7 +220,7 @@ class PlayerCommands(commands.Cog):
                              village: str = "home"):
         
         await interaction.response.defer()
-        
+
         try:
             target_user = user or interaction.user
             tag = fetch_player_from_DB(None, target_user, player_tag)
@@ -187,50 +228,20 @@ class PlayerCommands(commands.Cog):
             # unrecognised troop makes Player.home_troops raise for the whole player.
             player_data = await get_player_data(tag, load_game_data=False)
 
-            exclude = ['super', 'sneaky', 'ice golem', 'inferno', 'rocket balloon', 'ice hound']
-            
-            def format_lvl(item): 
-                try:
-                    max_val = item.max_level
-                except (IndexError, AttributeError):
-                    max_val = "?"
-                max_str = '★' if item.is_max else ''
-                return f"  {item.name}: {item.level}/{max_val} {max_str}"
+            sections = _levels_sections(player_data, village)
+            if not sections:
+                return await interaction.followup.send(f"No troops, spells or sieges found for **{player_data.name}**.")
 
-            lines = [f"PLAYER: {player_data.name} ({player_data.tag})"]
+            try:
+                png = await build_levels_image(sections)
+            except Exception as render_err:
+                # Never leave the user with nothing: fall back to the text output.
+                print(f"⚠️ Levels image render failed, using text fallback: {render_err}")
+                return await send_yaml_chunks(interaction.followup.send, _levels_yaml_lines(player_data, sections))
 
-            # 
-            if village in ["home", "both"]:
-                # Without static data there's no is_siege_machine flag, so sieges are
-                # identified by name. Troops unknown to coc.py sort last, not first.
-                home_troops = [t for t in _sorted_home_troops(player_data) if t.name not in UNKNOWN_TO_COC_PETS]
-                # Filter troops (excluding sieges and specific 'super' types)
-                troop_list = [format_lvl(t) for t in home_troops
-                              if t.name not in SIEGE_MACHINE_ORDER and all(w not in t.name.lower() for w in exclude)]
-                siege_list = [format_lvl(s) for s in home_troops if s.name in SIEGE_MACHINE_ORDER]
-                
-                if troop_list:
-                    lines.append("\n--- HOME TROOPS ---")
-                    lines.extend(troop_list)
-                if siege_list:
-                    lines.append("\n--- SIEGE MACHINES ---")
-                    lines.extend(siege_list)
-
-                spell_list = [format_lvl(sp) for sp in _sorted_spells(player_data)]
-                if spell_list:
-                    lines.append("\n--- SPELLS ---")
-                    lines.extend(spell_list)
-
-            # 
-            if village in ["builder", "both"]:
-                builder_list = [format_lvl(t) for t in player_data.builder_troops]
-                if builder_list:
-                    lines.append("\n--- BUILDER TROOPS ---")
-                    lines.extend(builder_list)
-
-            #
-            # Troops + sieges + spells can exceed Discord's 2000-char limit; split into several messages.
-            await send_yaml_chunks(interaction.followup.send, lines)
+            embed = discord.Embed(title=f"{player_data.name} ({player_data.tag})", color=0x3498db)
+            embed.set_image(url="attachment://levels.png")
+            await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(png), filename="levels.png"))
 
         # 5. Clean Exception Handling
         except (PlayerNotLinkedError, MissingPlayerTagError) as e:
