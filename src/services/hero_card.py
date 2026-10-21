@@ -165,6 +165,9 @@ def _wrap(draw, text, font, max_w):
 def render_hero_image(heroes, pets):
     """Synchronous Pillow render using whatever is in the icon cache.
     Returns PNG bytes. Run via asyncio.to_thread."""
+    # Fixed display order (matches the in-game Hero Hall); unknown/new heroes go last.
+    order = {name: i for i, name in enumerate(HERO_ORDER)}
+    heroes = sorted(heroes, key=lambda h: order.get(h["name"].lower(), len(order)))
     hero_xs = _row_x_positions(len(heroes), COLS, CARD_W, GAP, WIDTH - PAD * 2)
     hero_rows = (len(heroes) + COLS - 1) // COLS
     pet_rows = (len(pets) + PET_COLS - 1) // PET_COLS

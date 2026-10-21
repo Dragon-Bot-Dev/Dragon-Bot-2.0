@@ -119,13 +119,18 @@ async def check_coc_player_tag(player_tag):
 
 # --- Data Retrieval Helpers ---
 
-async def get_player_data(player_tag: str):
+async def get_player_data(player_tag: str, load_game_data: bool = None):
     """
     Fetches full player profile using coc_client.
+
+    Pass load_game_data=False to build units straight from the API payload.
+    coc.py's bundled static game data lags the game, and a single unit it
+    doesn't recognise (e.g. a newly released troop) makes Player.troops raise.
     """
     try:
+        kwargs = {} if load_game_data is None else {"load_game_data": load_game_data}
         # Returns a Player object with attributes like player.name, player.town_hall, etc.
-        player = await coc_client.get_player(player_tag)
+        player = await coc_client.get_player(player_tag, **kwargs)
         return player
     except coc.NotFound:
         raise RuntimeError(f"Clash API Error (404): Player {player_tag} not found.")

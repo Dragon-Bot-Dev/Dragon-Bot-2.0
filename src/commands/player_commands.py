@@ -6,6 +6,7 @@ import time
 import coc
 from discord.ext import commands
 from discord import app_commands, Embed
+from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER
 
 # Import helpers from your config and utils
 from config import get_db_cursor, coc_client
@@ -16,22 +17,53 @@ from utils import (
 from services.hero_card import build_hero_image
 from commands.war_commands import send_yaml_chunks
 
+# Pets newer than coc.py's PETS_ORDER. The library files unknown pets under
+# troops, so they'd be missing from Player.pets and show up as troops instead.
+UNKNOWN_TO_COC_PETS = {"Greedy Raven"}
 
-def _hero_image_data(player_data):
-    """Plain dicts for services.hero_card (home-village heroes with their
-    equipped gear, plus pets)."""
+
+def _sorted_home_troops(player_data):
+    """Home troops in game order, with troops coc.py doesn't know about last
+    (the library sorts them first). Needs a player fetched with
+    load_game_data=False, otherwise unknown troops make home_troops raise."""
+    order = {name: i for i, name in enumerate(HOME_TROOP_ORDER)}
+    return sorted(player_data.home_troops, key=lambda t: order.get(t.name, len(order)))
+
+
+def _home_heroes(player_data):
+    """All home-village heroes. Player.heroes only returns names in coc.py's
+    fixed HERO_ORDER, silently dropping newer heroes (e.g. Dragon Duke), so
+    read the library's underlying hero iterator instead. It can only be read
+    once, so call this once per command and pass the result around."""
+    try:
+        heroes = list(player_data._iter_heroes)
+    except Exception:
+        heroes = []
+    if not heroes:
+        heroes = list(player_data.heroes)
+    return [h for h in heroes if h.is_home_base]
+
+
+def _all_pets(player_data):
+    extra = [t for t in player_data.home_troops if t.name in UNKNOWN_TO_COC_PETS]
+    return list(player_data.pets) + extra
+
+
+def _hero_image_data(hero_objs, pet_objs):
+    """Plain dicts for services.hero_card (heroes with their equipped gear,
+    plus pets)."""
     heroes = [
         {
             "name": h.name, "level": h.level, "is_max": h.is_max,
             "gear": [{"name": e.name, "level": e.level, "is_max": e.is_max} for e in h.equipment],
         }
-        for h in player_data.heroes if h.is_home_base
+        for h in hero_objs
     ]
-    pets = [{"name": p.name, "level": p.level, "is_max": p.is_max} for p in player_data.pets]
+    pets = [{"name": p.name, "level": p.level, "is_max": p.is_max} for p in pet_objs]
     return heroes, pets
 
 
-def _heroes_yaml_lines(player_data):
+def _heroes_yaml_lines(player_data, hero_objs, pet_objs):
     """Text fallback for /playerheroes, used if the image can't be rendered."""
     def format_lvl(item):
         rarity = "EPIC" if item.max_level > 18 else "Common"
@@ -40,12 +72,12 @@ def _heroes_yaml_lines(player_data):
 
     hero_list = [
         f"  {h.name}: Lvl {h.level}/{h.max_level} {'(MAXED)' if h.is_max else ''}"
-        for h in player_data.heroes if h.is_home_base
+        for h in hero_objs
     ]
     equipment_list = [format_lvl(e) for e in sorted(player_data.equipment, key=lambda x: x.level, reverse=True)]
     pet_list = [
         f"  {p.name}: Lvl {p.level}/{p.max_level} {'(MAXED)' if p.is_max else ''}"
-        for p in sorted(player_data.pets, key=lambda x: x.level, reverse=True)
+        for p in sorted(pet_objs, key=lambda x: x.level, reverse=True)
     ]
     return [
         f"Player: {player_data.name}",
@@ -144,7 +176,9 @@ class PlayerCommands(commands.Cog):
         try:
             target_user = user or interaction.user
             tag = fetch_player_from_DB(None, target_user, player_tag)
-            player_data = await get_player_data(tag)
+            # Don't rely on coc.py's static data here: it lags the game, and one
+            # unrecognised troop makes Player.home_troops raise for the whole player.
+            player_data = await get_player_data(tag, load_game_data=False)
 
             exclude = ['super', 'sneaky', 'ice golem', 'inferno', 'rocket balloon', 'ice hound']
             
@@ -160,10 +194,13 @@ class PlayerCommands(commands.Cog):
 
             # 
             if village in ["home", "both"]:
+                # Without static data there's no is_siege_machine flag, so sieges are
+                # identified by name. Troops unknown to coc.py sort last, not first.
+                home_troops = [t for t in _sorted_home_troops(player_data) if t.name not in UNKNOWN_TO_COC_PETS]
                 # Filter troops (excluding sieges and specific 'super' types)
-                troop_list = [format_lvl(t) for t in player_data.home_troops 
-                              if not t.is_siege_machine and all(w not in t.name.lower() for w in exclude)]
-                siege_list = [format_lvl(s) for s in player_data.home_troops if s.is_siege_machine]
+                troop_list = [format_lvl(t) for t in home_troops
+                              if t.name not in SIEGE_MACHINE_ORDER and all(w not in t.name.lower() for w in exclude)]
+                siege_list = [format_lvl(s) for s in home_troops if s.name in SIEGE_MACHINE_ORDER]
                 
                 if troop_list:
                     lines.append("\n--- HOME TROOPS ---")
@@ -207,9 +244,11 @@ class PlayerCommands(commands.Cog):
         try:
             target_user = user or interaction.user
             tag = fetch_player_from_DB(None, target_user, player_tag)
-            player_data = await get_player_data(tag)
+            # See /playerlevels: avoid coc.py's lagging static data.
+            player_data = await get_player_data(tag, load_game_data=False)
 
-            heroes, pets = _hero_image_data(player_data)
+            hero_objs, pet_objs = _home_heroes(player_data), _all_pets(player_data)
+            heroes, pets = _hero_image_data(hero_objs, pet_objs)
             if not heroes and not pets:
                 return await interaction.followup.send(f"**{player_data.name}** has no heroes or pets yet.")
 
@@ -218,7 +257,7 @@ class PlayerCommands(commands.Cog):
             except Exception as render_err:
                 # Never leave the user with nothing: fall back to the old text output.
                 print(f"⚠️ Hero image render failed, using text fallback: {render_err}")
-                return await send_yaml_chunks(interaction.followup.send, _heroes_yaml_lines(player_data))
+                return await send_yaml_chunks(interaction.followup.send, _heroes_yaml_lines(player_data, hero_objs, pet_objs))
 
             embed = discord.Embed(title=f"{player_data.name} ({player_data.tag})", color=0x3498db)
             embed.set_image(url="attachment://heroes.png")
