@@ -354,7 +354,7 @@ class BotCommands(commands.Cog):
             name="⚔️ Player Tools",
             value=(
                 "> [G] `/playerinfo` — General stats and clan-related info\n"
-                "> [G] `/playerlevels` — Troops & Siege levels\n"
+                "> [G] `/playerlevels` — Troops, Siege & Spell levels\n"
                 "> [G] `/playerheroes` — Check heroes, pets and equipment levels\n"
                 "> [C] `/searchmember` — Find a player in your current clan"
             ),

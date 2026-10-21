@@ -6,7 +6,7 @@ import time
 import coc
 from discord.ext import commands
 from discord import app_commands, Embed
-from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER
+from coc.constants import SIEGE_MACHINE_ORDER, HOME_TROOP_ORDER, SPELL_ORDER
 
 # Import helpers from your config and utils
 from config import get_db_cursor, coc_client
@@ -42,6 +42,13 @@ def _home_heroes(player_data):
     if not heroes:
         heroes = list(player_data.heroes)
     return [h for h in heroes if h.is_home_base]
+
+
+def _sorted_spells(player_data):
+    """Spells in game order, with ones coc.py doesn't know about last (the
+    library sorts them first)."""
+    order = {name: i for i, name in enumerate(SPELL_ORDER)}
+    return sorted(player_data.spells, key=lambda s: order.get(s.name, len(order)))
 
 
 def _all_pets(player_data):
@@ -155,7 +162,7 @@ class PlayerCommands(commands.Cog):
             await interaction.followup.send(f"❌ {e}")
 
 
-    @app_commands.command(name="playerlevels", description="Get a player's troop & siege levels")
+    @app_commands.command(name="playerlevels", description="Get a player's troop, siege & spell levels")
     @app_commands.describe(
         user="Select a Discord user", 
         player_tag="The user's tag (optional)",
@@ -209,6 +216,11 @@ class PlayerCommands(commands.Cog):
                     lines.append("\n--- SIEGE MACHINES ---")
                     lines.extend(siege_list)
 
+                spell_list = [format_lvl(sp) for sp in _sorted_spells(player_data)]
+                if spell_list:
+                    lines.append("\n--- SPELLS ---")
+                    lines.extend(spell_list)
+
             # 
             if village in ["builder", "both"]:
                 builder_list = [format_lvl(t) for t in player_data.builder_troops]
@@ -217,13 +229,8 @@ class PlayerCommands(commands.Cog):
                     lines.extend(builder_list)
 
             #
-            final_message = f"```yaml\n" + "\n".join(lines) + "```"
-            
-            # Simple safety check: Discord will 400 if it's over 2000
-            if len(final_message) > 2000:
-                await interaction.followup.send("⚠️ This player has too much data to display in one message. Try selecting one village at a time.", ephemeral=True)
-            else:
-                await interaction.followup.send(final_message)
+            # Troops + sieges + spells can exceed Discord's 2000-char limit; split into several messages.
+            await send_yaml_chunks(interaction.followup.send, lines)
 
         # 5. Clean Exception Handling
         except (PlayerNotLinkedError, MissingPlayerTagError) as e:
